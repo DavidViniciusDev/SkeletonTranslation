@@ -1,0 +1,144 @@
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+ENV/
+.conda/
+.python-version
+
+# Testes / cobertura / lint
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.cache/
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+
+# Jupyter / IPython
+.ipynb_checkpoints/
+profile_default/
+ipython_config.py
+
+# ---------------------------------------------------------------------------
+# Dados (datasets, landmarks, features) — grandes demais para o Git
+# ---------------------------------------------------------------------------
+data/*
+!data/.gitkeep
+
+# Formatos de dados/vídeo em qualquer lugar do repositório
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.parquet
+*.feather
+*.arrow
+*.tfrecord
+*.lmdb
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+
+# ---------------------------------------------------------------------------
+# Checkpoints, pesos e artefatos de treino
+# ---------------------------------------------------------------------------
+checkpoints/
+checkpoints*/
+runs/
+outputs/
+logs/
+lightning_logs/
+wandb/
+mlruns/
+.baselines/
+
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.bin
+*.tflite
+
+# Tokenizers / SentencePiece exportados junto dos checkpoints
+*.spiece
+spiece.model
+
+# ---------------------------------------------------------------------------
+# Logs de execução capturados na raiz do projeto
+# ---------------------------------------------------------------------------
+*.log
+training*.txt
+extraction*.txt
+traning_command.txt
+nohup.out
+slurm-*.out
+
+# ---------------------------------------------------------------------------
+# Segredos e configuração local
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+secrets.yaml
+
+# ---------------------------------------------------------------------------
+# Editores e sistema operacional
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# Diversos
+# ---------------------------------------------------------------------------
+tmp/
+temp/
+scratch/
+*.tmp
+*.bak
+*.orig
