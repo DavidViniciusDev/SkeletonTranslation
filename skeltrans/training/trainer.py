@@ -9,11 +9,13 @@ from torch.utils.data import DataLoader
 from skeltrans.training.checkpoint import save_checkpoint
 from skeltrans.training.data import LandmarkTextDataset, make_collate
 from skeltrans.training.device import resolve_device
+from skeltrans.training.low_vram import (autocast_ctx, bf16_supported,
+                                         make_optimizer, offload_t5_encoder)
 from skeltrans.training.models import SLTModel
 
 
 @torch.no_grad()
-def evaluate(model, dl, device):
+def evaluate(model, dl, device, use_bf16=False):
     """Perda de validação — sempre só a de tradução (CE), sem o termo de CTC,
     para que val_loss seja comparável entre execuções com e sem CTC."""
     model.eval()
@@ -21,7 +23,8 @@ def evaluate(model, dl, device):
     for batch in dl:
         feats, pad_mask, labels = batch[0], batch[1], batch[2]
         feats, pad_mask, labels = feats.to(device), pad_mask.to(device), labels.to(device)
-        loss, _ = model(feats, pad_mask, labels)
+        with autocast_ctx(use_bf16):
+            loss, _ = model(feats, pad_mask, labels)
         total += loss.item()
     return total / max(1, len(dl))
 
@@ -35,6 +38,13 @@ class Trainer:
         self.cfg = train_cfg
         self.device = device
         self.meta = meta or {}
+        # bf16 só quando --low-vram foi pedido E a GPU suporta (Ampere+).
+        low_vram = bool(getattr(train_cfg, "low_vram", False))
+        self.use_bf16 = low_vram and bf16_supported(device)
+        if self.use_bf16:
+            print("[low-vram] autocast bf16 ativo no forward do treino")
+        elif low_vram:
+            print("[low-vram] dispositivo sem suporte a bf16; treino segue em fp32")
 
     def _run_batch(self, batch):
         """Executa um passo forward, aceitando lotes com ou sem alvos de CTC."""
@@ -48,16 +58,18 @@ class Trainer:
         feats = feats.to(self.device)
         pad_mask = pad_mask.to(self.device)
         labels = labels.to(self.device)
-        loss, _ = self.model(feats, pad_mask, labels,
-                             gloss_targets=gloss, gloss_lengths=glen,
-                             ctc_weight=getattr(self.cfg, "ctc_weight", 0.0))
+        with autocast_ctx(self.use_bf16):
+            loss, _ = self.model(feats, pad_mask, labels,
+                                 gloss_targets=gloss, gloss_lengths=glen,
+                                 ctc_weight=getattr(self.cfg, "ctc_weight", 0.0))
         return loss
 
     def fit(self, train_dl, val_dl=None):
         from transformers import get_linear_schedule_with_warmup
 
         cfg = self.cfg
-        optim = torch.optim.AdamW(self.model.parameters(), lr=cfg.lr)
+        optim = make_optimizer(self.model.parameters(), cfg.lr,
+                               low_vram=getattr(cfg, "low_vram", False))
         total_steps = len(train_dl) * cfg.epochs
         sched = get_linear_schedule_with_warmup(optim, cfg.warmup_steps, total_steps)
 
@@ -82,7 +94,8 @@ class Trainer:
                           f"loss {running/step:.4f} lr {sched.get_last_lr()[0]:.2e}")
             train_loss = running / max(1, len(train_dl))
 
-            val_loss = evaluate(self.model, val_dl, self.device) if val_dl else None
+            val_loss = (evaluate(self.model, val_dl, self.device, use_bf16=self.use_bf16)
+                        if val_dl else None)
             msg = f"[epoch {epoch}] train_loss={train_loss:.4f}"
             if val_loss is not None:
                 msg += f" val_loss={val_loss:.4f}"
@@ -137,6 +150,11 @@ def build_and_train(model_cfg, data_cfg, train_cfg):
                      num_layers=model_cfg.num_layers, dropout=model_cfg.dropout,
                      use_ctc=model_cfg.use_ctc,
                      gloss_vocab_size=model_cfg.gloss_vocab_size).to(device)
+
+    # O encoder do T5 nunca executa (a memória vem do LandmarkEncoder via
+    # encoder_outputs); com --low-vram seus blocos saem da GPU.
+    if getattr(train_cfg, "low_vram", False):
+        offload_t5_encoder(t5)
 
     # Treino: collate com glosas quando CTC ativo. Validação: sempre sem glosas
     # (val_loss = só CE, comparável entre configurações).

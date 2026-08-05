@@ -124,6 +124,13 @@ def build_parser():
         "--device", default=_TC.device,
         help="Dispositivo de execucao: 'cuda' ou 'cpu'. Se omitido, usa CUDA quando disponivel "
              "e cai para CPU caso contrario.")
+    ap.add_argument(
+        "--low-vram", action="store_true", default=_TC.low_vram,
+        help="Ativa otimizacoes de memoria de GPU (desligadas por padrao): (1) move para a CPU "
+             "os blocos do encoder do T5, que nunca executam nesta arquitetura; (2) autocast "
+             "bfloat16 no forward (exige GPU Ampere+; senao mantem fp32); (3) otimizador AdamW "
+             "8-bit do bitsandbytes, se instalado. Nao muda a arquitetura nem o formato dos "
+             "checkpoints. Detalhes em LOW_VRAM.md.")
     return ap
 
 
@@ -138,7 +145,7 @@ def args_to_configs(args):
                             grad_clip=args.grad_clip, log_every=args.log_every,
                             out_dir=args.out_dir, device=args.device,
                             patience=args.patience, min_delta=args.min_delta,
-                            ctc_weight=args.ctc_weight)
+                            ctc_weight=args.ctc_weight, low_vram=args.low_vram)
     return model_cfg, data_cfg, train_cfg
 
 

@@ -24,12 +24,16 @@ def _model_hparams(meta):
     return meta.get("model", meta) if isinstance(meta, dict) else {}
 
 
-def load_model(checkpoint, device, t5_override=None):
+def load_model(checkpoint, device, t5_override=None, low_vram=False):
     """Reconstrói o SLTModel a partir de um checkpoint e carrega os pesos.
 
     Retorna (model, ckpt, t5_name): `model` já em `device` e em modo eval;
     `ckpt` é o dict bruto salvo (útil para ler ckpt['epoch']); `t5_name` é o
     identificador do decoder efetivamente usado.
+
+    `low_vram=True` aplica as otimizações de memória da inferência (pesos em
+    bf16 quando a GPU suporta + offload do encoder do T5, que não é usado).
+    Ver LOW_VRAM.md.
     """
     from transformers import T5ForConditionalGeneration
 
@@ -60,6 +64,11 @@ def load_model(checkpoint, device, t5_override=None):
     if unexpected:
         print(f"[checkpoint] chaves inesperadas ({len(unexpected)}): {unexpected[:4]}...")
     model.to(device).eval()
+    if low_vram:
+        from skeltrans.training.low_vram import (cast_bf16_for_inference,
+                                                 offload_t5_encoder)
+        cast_bf16_for_inference(model, device)
+        offload_t5_encoder(model.t5)
     return model, ckpt, t5_name
 
 

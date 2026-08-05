@@ -36,6 +36,9 @@ class SLTModel(nn.Module):
 
     def _encode(self, feats, pad_mask):
         from transformers.modeling_outputs import BaseModelOutput
+        # o DataLoader entrega fp32; acompanha o dtype dos pesos (bf16 quando
+        # --low-vram converte o modelo na inferência)
+        feats = feats.to(self.encoder.input_proj.weight.dtype)
         memory = self.encoder(feats, pad_mask)                 # (B, T, t5_hidden)
         attn = (~pad_mask).long()                              # 1 = valido, 0 = pad
         return BaseModelOutput(last_hidden_state=memory), attn

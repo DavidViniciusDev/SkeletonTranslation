@@ -54,3 +54,6 @@ class TrainConfig:
     min_delta: float = 0.0
     # --- peso da perda auxiliar de CTC (só aplicado quando use_ctc=True) --- #
     ctc_weight: float = 0.3
+    # --- otimizações de VRAM: offload do encoder T5, bf16, AdamW 8-bit --- #
+    # Desligado por padrão (comportamento original). Ver LOW_VRAM.md.
+    low_vram: bool = False

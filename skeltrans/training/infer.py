@@ -69,7 +69,8 @@ def run(args):
     device = resolve_device(args.device)
     print(f"Dispositivo: {device}")
 
-    model, ckpt, t5_name = load_model(args.checkpoint, device, args.t5)
+    model, ckpt, t5_name = load_model(args.checkpoint, device, args.t5,
+                                      low_vram=args.low_vram)
     tokenizer = load_tokenizer(args.checkpoint, t5_name, args.tokenizer)
     print(f"Checkpoint: {args.checkpoint} | T5: {t5_name}\n")
 
@@ -103,6 +104,9 @@ def build_parser():
     ap.add_argument("--num-beams", type=int, default=4)
     ap.add_argument("--max-new-tokens", type=int, default=64)
     ap.add_argument("--device", default=None, help="cuda|cpu (auto se omitido)")
+    ap.add_argument("--low-vram", action="store_true",
+                    help="reduz o uso de VRAM: pesos em bfloat16 (GPU Ampere+) e offload do "
+                         "encoder do T5, que nao e usado nesta arquitetura. Ver LOW_VRAM.md.")
     return ap
 
 

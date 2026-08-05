@@ -49,6 +49,11 @@ python3 slt_model.py --smoke-test --device cpu
 CUDA_VISIBLE_DEVICES="" python3 slt_model.py --smoke-test
 ```
 
+Se a GPU tiver **pouca memória**, ative as otimizações opcionais com
+`--low-vram` (offload do encoder ocioso do T5, bfloat16 e AdamW 8-bit) —
+disponível no treino, na inferência e na avaliação. Desligado por padrão.
+Detalhes em [`LOW_VRAM.md`](LOW_VRAM.md).
+
 ---
 
 ## 2. Layout dos dados (`data/`)
