@@ -23,6 +23,9 @@ class LandmarkEncoder(nn.Module):
         # adaptador para o hidden do decoder (T5), se necessario
         out_dim = out_dim or d_model
         self.adapter = nn.Identity() if out_dim == d_model else nn.Linear(d_model, out_dim)
+        # recomputa ativacoes no backward em vez de guarda-las (--grad-checkpoint);
+        # nao cria parametros, entao checkpoints .pt continuam identicos
+        self.grad_checkpoint = False
 
     def forward(self, feats, pad_mask):
         """feats: (B, T, INPUT_DIM); pad_mask: (B, T) True onde e padding."""
@@ -30,5 +33,12 @@ class LandmarkEncoder(nn.Module):
         x = self.temporal_conv(x.transpose(1, 2)).transpose(1, 2)  # conv sobre o tempo
         x = self.pos_enc(x)
         x = self.dropout(x)
-        x = self.transformer(x, src_key_padding_mask=pad_mask)     # (B, T, d_model)
+        if self.grad_checkpoint and self.training:
+            from torch.utils.checkpoint import checkpoint
+            # camada a camada: evita guardar as matrizes de atencao (B*nhead,T,T),
+            # que dominam a VRAM em sequencias longas
+            for layer in self.transformer.layers:
+                x = checkpoint(layer, x, None, pad_mask, use_reentrant=False)
+        else:
+            x = self.transformer(x, src_key_padding_mask=pad_mask)  # (B, T, d_model)
         return self.adapter(x)                      # (B, T, out_dim)

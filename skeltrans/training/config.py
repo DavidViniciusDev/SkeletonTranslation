@@ -57,3 +57,7 @@ class TrainConfig:
     # --- otimizações de VRAM: offload do encoder T5, bf16, AdamW 8-bit --- #
     # Desligado por padrão (comportamento original). Ver LOW_VRAM.md.
     low_vram: bool = False
+    # --- gradient checkpointing: recomputa ativações no backward --- #
+    # Corta drasticamente a VRAM de ativações (sequências longas) ao custo de
+    # ~25-30% de velocidade. Desligado por padrão. Ver LOW_VRAM.md.
+    grad_checkpoint: bool = False

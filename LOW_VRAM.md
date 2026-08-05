@@ -8,6 +8,10 @@ liberando tipicamente **1,5 a 2,5 GB de VRAM no treino** e **mais da metade
 da memória de pesos na inferência**, sem alterar a arquitetura nem o formato
 dos checkpoints.
 
+> Se o treino ainda estourar a memória (OOM) com `--low-vram`, veja também a
+> flag complementar [`--grad-checkpoint`](#e-quando-o-oom-continua--grad-checkpoint-só-no-treino),
+> que ataca as ativações de sequências longas.
+
 ```bash
 # treino
 python3 slt_model.py --train-manifest train.json --val-manifest val.json \
@@ -144,6 +148,41 @@ Na prática: **~1,5 a 2,5 GB liberados no treino** (dependendo do batch) e
 - **Compatibilidade dos comandos:** é uma flag aditiva; todos os outros
   parâmetros funcionam igual.
 
+## E quando o OOM continua? — `--grad-checkpoint` (só no treino)
+
+Se mesmo com `--low-vram` o treino estoura a memória, o culpado quase sempre
+são as **ativações da atenção com sequências longas**. Cada uma das 6 camadas
+do `LandmarkEncoder` guarda, para o backward, uma matriz de atenção de formato
+`(B × nhead, T, T)` — e `T` é o número de *frames* da maior frase do lote.
+O custo cresce com o **quadrado** de `T`:
+
+| T (frames) | Uma matriz de atenção (batch 8, 8 heads, bf16) | × 6 camadas |
+|-----------:|-----------------------------------------------:|------------:|
+| 500        | ~32 MB                                          | ~0,2 GB     |
+| 1500       | ~288 MB                                         | ~1,7 GB     |
+| 3000       | ~1,15 GB                                        | ~6,9 GB     |
+
+Ou seja: um único lote com frases de ~3000 frames consome mais VRAM em
+ativações do que o modelo inteiro em pesos + otimizador. É exatamente o perfil
+do erro `Tried to allocate 1.23 GiB` com quase 10 GB já ocupados.
+
+A flag `--grad-checkpoint` resolve trocando memória por computação: as
+ativações **não são guardadas** — no backward, cada camada refaz seu forward
+para recomputá-las na hora. Aplica-se ao `LandmarkEncoder` e ao decoder T5.
+
+```bash
+python3 slt_model.py --train-manifest train.json --val-manifest val.json \
+    --out-dir checkpoints --low-vram --grad-checkpoint
+```
+
+- **Economia:** a VRAM de ativações cai para uma fração pequena (fica ~1 camada
+  em vez de todas); é a otimização mais eficaz contra OOM de sequência longa.
+- **Custo:** ~25–30% mais lento por época (um forward extra no backward).
+- **Qualidade:** nenhuma — os gradientes são matematicamente idênticos.
+- **Por que é uma flag separada do `--low-vram`?** Porque tem custo real de
+  velocidade; as três otimizações do `--low-vram` são praticamente de graça.
+- Só tem efeito no treino; na inferência não há backward nem ativações guardadas.
+
 ## Perguntas frequentes
 
 **Isso reduz a qualidade da tradução (BLEU/METEOR)?**
@@ -161,7 +200,8 @@ Só o `bitsandbytes`, e apenas se quiser o otimizador 8-bit no treino. Offload
 e bf16 usam só o PyTorch.
 
 **Ainda estou sem VRAM suficiente. E agora?**
-Os próximos passos (mais invasivos, fora do escopo desta flag) seriam
-*gradient checkpointing* no decoder, reduzir `--batch-size` (com acúmulo de
-gradiente) e LoRA/QLoRA — congelar o PTT5 quantizado em 4 bits e treinar só
-adaptadores + o `LandmarkEncoder`.
+Na ordem: (1) adicione `--grad-checkpoint` (seção acima); (2) reduza o
+`--batch-size` (4 ou 2); (3) instale o `bitsandbytes` se ainda não instalou.
+Depois disso, os próximos passos (mais invasivos, fora do escopo destas flags)
+seriam acúmulo de gradiente e LoRA/QLoRA — congelar o PTT5 quantizado em
+4 bits e treinar só adaptadores + o `LandmarkEncoder`.

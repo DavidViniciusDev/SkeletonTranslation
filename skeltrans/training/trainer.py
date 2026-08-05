@@ -156,6 +156,17 @@ def build_and_train(model_cfg, data_cfg, train_cfg):
     if getattr(train_cfg, "low_vram", False):
         offload_t5_encoder(t5)
 
+    # Gradient checkpointing: recomputa ativações no backward em vez de
+    # guardá-las — essencial quando o OOM vem de sequências longas (a atenção
+    # do LandmarkEncoder guarda matrizes (B*nhead, T, T) por camada).
+    if getattr(train_cfg, "grad_checkpoint", False):
+        model.encoder.grad_checkpoint = True
+        t5.config.use_cache = False  # incompatível com checkpointing (só treino)
+        t5.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False})
+        print("[grad-checkpoint] ativo no LandmarkEncoder e no decoder T5 "
+              "(menos VRAM de ativacoes, ~25-30% mais lento)")
+
     # Treino: collate com glosas quando CTC ativo. Validação: sempre sem glosas
     # (val_loss = só CE, comparável entre configurações).
     train_collate = make_collate(tokenizer, data_cfg.max_text_len, gloss_vocab=gloss_vocab)

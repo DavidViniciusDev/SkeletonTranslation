@@ -131,6 +131,12 @@ def build_parser():
              "bfloat16 no forward (exige GPU Ampere+; senao mantem fp32); (3) otimizador AdamW "
              "8-bit do bitsandbytes, se instalado. Nao muda a arquitetura nem o formato dos "
              "checkpoints. Detalhes em LOW_VRAM.md.")
+    ap.add_argument(
+        "--grad-checkpoint", action="store_true", default=_TC.grad_checkpoint,
+        help="Ativa gradient checkpointing no LandmarkEncoder e no decoder T5: as ativacoes "
+             "deixam de ser guardadas e sao recomputadas no backward. Corta drasticamente a "
+             "VRAM de ativacoes (o gargalo com sequencias longas de frames), ao custo de "
+             "~25-30%% de velocidade. Combine com --low-vram. Detalhes em LOW_VRAM.md.")
     return ap
 
 
@@ -145,7 +151,8 @@ def args_to_configs(args):
                             grad_clip=args.grad_clip, log_every=args.log_every,
                             out_dir=args.out_dir, device=args.device,
                             patience=args.patience, min_delta=args.min_delta,
-                            ctc_weight=args.ctc_weight, low_vram=args.low_vram)
+                            ctc_weight=args.ctc_weight, low_vram=args.low_vram,
+                            grad_checkpoint=args.grad_checkpoint)
     return model_cfg, data_cfg, train_cfg
 
 
