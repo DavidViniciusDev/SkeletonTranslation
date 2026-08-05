@@ -201,7 +201,10 @@ e bf16 usam só o PyTorch.
 
 **Ainda estou sem VRAM suficiente. E agora?**
 Na ordem: (1) adicione `--grad-checkpoint` (seção acima); (2) reduza o
-`--batch-size` (4 ou 2); (3) instale o `bitsandbytes` se ainda não instalou.
-Depois disso, os próximos passos (mais invasivos, fora do escopo destas flags)
-seriam acúmulo de gradiente e LoRA/QLoRA — congelar o PTT5 quantizado em
-4 bits e treinar só adaptadores + o `LandmarkEncoder`.
+`--batch-size` (4 ou 2); (3) instale o `bitsandbytes` se ainda não instalou;
+(4) se a máquina tiver mais de uma GPU, treine com DDP — o lote é dividido
+entre as placas e as ativações por GPU caem na proporção (ver
+[`MULTI_GPU.md`](MULTI_GPU.md)). Depois disso, os próximos passos (mais
+invasivos, fora do escopo destas flags) seriam acúmulo de gradiente e
+LoRA/QLoRA — congelar o PTT5 quantizado em 4 bits e treinar só adaptadores +
+o `LandmarkEncoder`.

@@ -54,6 +54,10 @@ Se a GPU tiver **pouca memória**, ative as otimizações opcionais com
 disponível no treino, na inferência e na avaliação. Desligado por padrão.
 Detalhes em [`LOW_VRAM.md`](LOW_VRAM.md).
 
+Com **mais de uma GPU**, treine com DDP trocando só o lançador
+(`torchrun --nproc_per_node=2 slt_model.py ...` — mesmos argumentos);
+`python3` continua treinando em 1 GPU. Detalhes em [`MULTI_GPU.md`](MULTI_GPU.md).
+
 ---
 
 ## 2. Layout dos dados (`data/`)

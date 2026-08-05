@@ -52,16 +52,21 @@ def autocast_ctx(enabled):
     return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
 
 
-def make_optimizer(params, lr, low_vram=False):
-    """AdamW padrão, ou AdamW 8-bit (bitsandbytes) quando ``low_vram=True``."""
+def make_optimizer(params, lr, low_vram=False, verbose=True):
+    """AdamW padrão, ou AdamW 8-bit (bitsandbytes) quando ``low_vram=True``.
+
+    ``verbose=False`` silencia os avisos (usado pelos ranks != 0 no DDP).
+    """
     if low_vram:
         try:
             import bitsandbytes as bnb
-            print("[low-vram] otimizador AdamW 8-bit (bitsandbytes) ativo")
+            if verbose:
+                print("[low-vram] otimizador AdamW 8-bit (bitsandbytes) ativo")
             return bnb.optim.AdamW8bit(params, lr=lr)
         except ImportError:
-            print("[low-vram] bitsandbytes nao instalado; usando AdamW padrao "
-                  "(instale com 'pip install bitsandbytes' para estados 8-bit)")
+            if verbose:
+                print("[low-vram] bitsandbytes nao instalado; usando AdamW padrao "
+                      "(instale com 'pip install bitsandbytes' para estados 8-bit)")
     return torch.optim.AdamW(params, lr=lr)
 
 
