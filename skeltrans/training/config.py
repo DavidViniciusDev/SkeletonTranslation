@@ -20,6 +20,12 @@ class ModelConfig:
     nhead: int = 8
     num_layers: int = 6
     dropout: float = 0.2
+    # --- downsampling temporal do encoder --- #
+    # Número de convoluções stride=2 antes da pilha Transformer: T -> T / 2^n.
+    # Padrão 2 (4x): aproxima a razão frames/unidade-lexical do regime em que o
+    # T5 foi pré-treinado e corta a memória de self-attention por 16.
+    # ds_steps=0 restaura a arquitetura original (braço de controle do ablation).
+    ds_steps: int = 2
     # --- supervisão auxiliar de reconhecimento (CTC de glosas) --- #
     # use_ctc=False mantém a arquitetura original (nenhum head extra criado).
     # gloss_vocab_size é preenchido automaticamente pelo build_and_train quando
