@@ -62,6 +62,15 @@ def build_parser():
         help="Quantidade de TransformerEncoderLayer empilhadas no encoder. O plano sugere de "
              "4 a 6; mais camadas = maior capacidade e custo. Padrao: 6.")
     ap.add_argument(
+        "--ds-steps", type=int, default=_MC.ds_steps,
+        help="Downsampling temporal do encoder: numero de convolucoes stride=2 aplicadas "
+             "antes da pilha Transformer (T -> T / 2^n). Padrao 2 (reducao de 4x). Uma frase "
+             "sintetizada tem ~500-800 frames para ~15 tokens de saida; reduzir T aproxima essa "
+             "razao do regime em que o T5 foi pre-treinado e corta a memoria de self-attention "
+             "por 4^n, permitindo subir o --batch-size. Use 0 para a arquitetura ORIGINAL "
+             "(braco de controle do ablation; tambem e o valor assumido ao carregar checkpoints "
+             "anteriores a esta flag).")
+    ap.add_argument(
         "--dropout", type=float, default=_MC.dropout,
         help="Taxa de dropout no encoder (projecao, atencao e feed-forward), para regularizar "
              "contra overfitting as transicoes sinteticas. Padrao: 0.2 (conforme o plano).")
@@ -143,7 +152,7 @@ def build_parser():
 def args_to_configs(args):
     model_cfg = ModelConfig(t5_name=args.t5, d_model=args.d_model, nhead=args.nhead,
                             num_layers=args.num_layers, dropout=args.dropout,
-                            use_ctc=args.use_ctc)
+                            ds_steps=args.ds_steps, use_ctc=args.use_ctc)
     data_cfg = DataConfig(train_manifest=args.train_manifest, val_manifest=args.val_manifest,
                           features_dir=args.features_dir, batch_size=args.batch_size,
                           num_workers=args.num_workers, max_text_len=args.max_text_len)
@@ -159,7 +168,7 @@ def args_to_configs(args):
 def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.smoke_test:
-        smoke_test(device=args.device, use_ctc=args.use_ctc)
+        smoke_test(device=args.device, use_ctc=args.use_ctc, ds_steps=args.ds_steps)
         return
     if not args.train_manifest:
         sys.exit("Faltou --train-manifest (ou use --smoke-test). Veja o cabecalho do arquivo.")

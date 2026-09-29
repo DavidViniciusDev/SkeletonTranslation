@@ -17,13 +17,14 @@ import torch.nn.functional as F
 
 class SLTModel(nn.Module):
     def __init__(self, t5, d_model=512, nhead=8, num_layers=6, dropout=0.2,
-                 use_ctc=False, gloss_vocab_size=0):
+                 use_ctc=False, gloss_vocab_size=0, ds_steps=0):
         super().__init__()
         self.t5 = t5
         t5_hidden = t5.config.d_model
         self.encoder = LandmarkEncoder(
             input_dim=INPUT_DIM, d_model=d_model, nhead=nhead,
             num_layers=num_layers, dropout=dropout, out_dim=t5_hidden,
+            ds_steps=ds_steps,
         )
         # Cabeça CTC opcional (blank fica no índice 0 do vocabulário de glosas).
         self.use_ctc = bool(use_ctc)
@@ -39,9 +40,12 @@ class SLTModel(nn.Module):
         # o DataLoader entrega fp32; acompanha o dtype dos pesos (bf16 quando
         # --low-vram converte o modelo na inferência)
         feats = feats.to(self.encoder.input_proj.weight.dtype)
-        memory = self.encoder(feats, pad_mask)                 # (B, T, t5_hidden)
+        # com ds_steps>0 o encoder encurta o eixo temporal e devolve a máscara já
+        # reduzida; o attention_mask do T5 e o CTC derivam DESSA máscara, nunca
+        # da original, sob pena de atender a padding silenciosamente.
+        memory, pad_mask = self.encoder(feats, pad_mask)        # (B, T', t5_hidden)
         attn = (~pad_mask).long()                              # 1 = valido, 0 = pad
-        return BaseModelOutput(last_hidden_state=memory), attn
+        return BaseModelOutput(last_hidden_state=memory), attn, pad_mask
 
     def _ctc_logits(self, memory):
         """Logits do head CTC sobre a saída do encoder: (B, T, V).
@@ -80,13 +84,13 @@ class SLTModel(nn.Module):
         Quando o CTC está ativo e os alvos são fornecidos, a perda devolvida é
         ``ce + ctc_weight * ctc``; ``logits`` continua sendo o do decoder.
         """
-        enc_out, attn = self._encode(feats, pad_mask)
+        enc_out, attn, enc_pad_mask = self._encode(feats, pad_mask)
         out = self.t5(encoder_outputs=enc_out, attention_mask=attn, labels=labels)
         loss = out.loss
         if (self.use_ctc and self.ctc_head is not None
                 and gloss_targets is not None and ctc_weight > 0):
             memory = enc_out.last_hidden_state
-            ctc = self._ctc_loss(memory, pad_mask, gloss_targets, gloss_lengths)
+            ctc = self._ctc_loss(memory, enc_pad_mask, gloss_targets, gloss_lengths)
             loss = loss + ctc_weight * ctc
         return loss, out.logits
 
@@ -127,7 +131,7 @@ class SLTModel(nn.Module):
 
     @torch.no_grad()
     def generate(self, feats, pad_mask, max_new_tokens=64, num_beams=4):
-        enc_out, attn = self._encode(feats, pad_mask)
+        enc_out, attn, _ = self._encode(feats, pad_mask)
         return self.t5.generate(
             encoder_outputs=enc_out, attention_mask=attn,
             max_new_tokens=max_new_tokens, num_beams=num_beams,

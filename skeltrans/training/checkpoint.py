@@ -51,6 +51,10 @@ def load_model(checkpoint, device, t5_override=None, low_vram=False):
         nhead=hp.get("nhead", 8),
         num_layers=hp.get("num_layers", 6),
         dropout=hp.get("dropout", 0.2),
+        # checkpoints anteriores à flag de downsampling não têm a chave: o padrão
+        # 0 reconstrói a arquitetura com que eles foram treinados (não o padrão
+        # atual de ModelConfig, que é 2).
+        ds_steps=hp.get("ds_steps", 0),
         # reconstrói o head CTC apenas se o checkpoint foi treinado com ele
         use_ctc=hp.get("use_ctc", False),
         gloss_vocab_size=hp.get("gloss_vocab_size", 0),
