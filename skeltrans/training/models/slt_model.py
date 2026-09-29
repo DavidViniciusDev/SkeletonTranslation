@@ -43,13 +43,25 @@ class SLTModel(nn.Module):
         attn = (~pad_mask).long()                              # 1 = valido, 0 = pad
         return BaseModelOutput(last_hidden_state=memory), attn
 
+    def _ctc_logits(self, memory):
+        """Logits do head CTC sobre a saída do encoder: (B, T, V).
+
+        Fatorado do `_ctc_loss` para que treino (perda) e avaliação
+        (reconhecimento de glosas) usem exatamente o mesmo caminho.
+        """
+        if not self.use_ctc or self.ctc_head is None:
+            raise RuntimeError(
+                "modelo sem head CTC: reconstrua com use_ctc=True "
+                "(ou avalie um checkpoint treinado com --use-ctc).")
+        return self.ctc_head(memory)
+
     def _ctc_loss(self, memory, pad_mask, gloss_targets, gloss_lengths):
         """CTC entre a saída do encoder e a sequência de glosas.
 
         memory: (B, T, t5_hidden); pad_mask: (B, T) True=padding;
         gloss_targets: (B, S) ids (0 = blank/padding); gloss_lengths: (B,).
         """
-        logits = self.ctc_head(memory)                         # (B, T, V)
+        logits = self._ctc_logits(memory)                      # (B, T, V)
         log_probs = F.log_softmax(logits, dim=-1)
         log_probs = log_probs.transpose(0, 1)                  # (T, B, V) p/ CTCLoss
         input_lengths = (~pad_mask).sum(dim=1).to(torch.long)  # frames válidos
@@ -77,6 +89,41 @@ class SLTModel(nn.Module):
             ctc = self._ctc_loss(memory, pad_mask, gloss_targets, gloss_lengths)
             loss = loss + ctc_weight * ctc
         return loss, out.logits
+
+    @torch.no_grad()
+    def predict_glosses(self, feats, pad_mask):
+        """Reconhecimento de glosas por decodificação CTC *greedy*.
+
+        Devolve uma lista de B listas de ids (já sem <blank> e sem repetições),
+        pronta para `GlossVocab.decode`. É o que permite medir WER de glosas —
+        a métrica nativa do PHOENIX — a partir do head auxiliar de CTC.
+
+        O procedimento greedy padrão do CTC tem três etapas, nesta ordem:
+          1. argmax por frame;
+          2. colapso de repetições CONSECUTIVAS (o CTC emite o mesmo rótulo em
+             frames vizinhos para um único sinal);
+          3. remoção dos <blank>.
+        A ordem importa: colapsar depois de remover os blanks fundiria dois
+        sinais iguais legitimamente separados por um blank (ex.: "IX IX").
+
+        Só os frames válidos entram: `pad_mask` delimita o comprimento real de
+        cada item, senão o padding do lote geraria glosas fantasma.
+        """
+        enc_out, _ = self._encode(feats, pad_mask)
+        logits = self._ctc_logits(enc_out.last_hidden_state)   # (B, T, V)
+        best = logits.argmax(dim=-1)                           # (B, T)
+        lengths = (~pad_mask).sum(dim=1).tolist()               # frames válidos
+        out = []
+        for b, n in enumerate(lengths):
+            seq, prev = [], None
+            for t in range(int(n)):
+                k = int(best[b, t])
+                if k != prev:                  # 2) colapsa repetições
+                    if k != 0:                 # 3) descarta <blank> (índice 0)
+                        seq.append(k)
+                    prev = k
+            out.append(seq)
+        return out
 
     @torch.no_grad()
     def generate(self, feats, pad_mask, max_new_tokens=64, num_beams=4):

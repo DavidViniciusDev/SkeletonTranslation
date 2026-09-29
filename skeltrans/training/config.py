@@ -18,8 +18,8 @@ class ModelConfig:
     t5_name: str = PTT5_NAME
     d_model: int = 512
     nhead: int = 8
-    num_layers: int = 6
-    dropout: float = 0.2
+    num_layers: int = 8
+    dropout: float = 0.15
     # --- supervisão auxiliar de reconhecimento (CTC de glosas) --- #
     # use_ctc=False mantém a arquitetura original (nenhum head extra criado).
     # gloss_vocab_size é preenchido automaticamente pelo build_and_train quando
@@ -43,7 +43,7 @@ class DataConfig:
 class TrainConfig:
     """Otimização, agenda e checkpointing."""
     epochs: int = 30
-    lr: float = 3e-5
+    lr: float = 1e-4
     warmup_steps: int = 500
     grad_clip: float = 1.0
     log_every: int = 50

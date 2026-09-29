@@ -38,6 +38,24 @@ class GlossVocab:
         """Converte uma lista de glosas em ids (glosa desconhecida -> <unk>)."""
         return [self.stoi.get(t, UNK_ID) for t in tokens]
 
+    def decode(self, ids, keep_special=False):
+        """Converte ids de volta em glosas.
+
+        Inverso de :meth:`encode`, usado para ler a saida do head CTC. Por
+        padrao descarta <blank> e <unk>: o <blank> nao e uma glosa (e o rotulo
+        vazio exigido pelo CTCLoss) e o <unk> nao corresponde a nenhum sinal,
+        entao mante-los inflaria artificialmente a contagem de palavras do WER.
+        Use ``keep_special=True`` para inspecionar a saida crua do decoder.
+        """
+        out = []
+        for i in ids:
+            i = int(i)
+            if not keep_special and i in (BLANK_ID, UNK_ID):
+                continue
+            if 0 <= i < len(self.itos):
+                out.append(self.itos[i])
+        return out
+
     # ------------------------------------------------------------------ #
     # Construção / persistência
     # ------------------------------------------------------------------ #
