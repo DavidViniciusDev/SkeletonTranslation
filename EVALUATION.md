@@ -31,7 +31,12 @@ O código real vive em [`skeltrans/training/evaluate.py`](skeltrans/training/eva
 | Métrica       | Fonte      | Escala | Observação |
 |---------------|------------|--------|------------|
 | BLEU-1..4     | `sacrebleu`| 0–100  | Cumulativos, com `effective_order` (robusto para frases curtas). |
-| METEOR        | `nltk`     | 0–1    | Média no corpus; tokenização simples (minúsculas + palavras). |
+| METEOR        | `nltk`     | 0–100  | Média no corpus, reescalada de 0–1 para 0–100 (mesma escala do BLEU e convenção da literatura); tokenização simples (minúsculas + palavras). |
+| **WER** (glosas) | interno | 0–100  | **Opcional** (`--wer`). Reconhecimento, não tradução: vem do head CTC. Agregado por contagem no corpus — `(S+D+I)/N` — e não média por frase. **Menor é melhor.** |
+| **BERTScore** P/R/F1 | `bert-score` | 0–100 | **Opcional** (`--bertscore LANG`). Métrica neural *reference-only*. |
+
+> **Atenção ao sentido.** BLEU, METEOR e BERTScore são *maior é melhor*; o
+> **WER é menor é melhor**. Numa tabela lado a lado isso precisa estar explícito.
 
 ### Dependências de métrica
 
@@ -39,7 +44,47 @@ O código real vive em [`skeltrans/training/evaluate.py`](skeltrans/training/eva
 pip install sacrebleu nltk
 # corpora do METEOR (uma vez):
 python -c "import nltk; nltk.download('wordnet'); nltk.download('omw-1.4')"
+
+# só se for usar --bertscore (baixa um modelo na primeira execução):
+pip install bert-score
 ```
+
+O WER não tem dependência externa — a distância de edição é implementada em
+`metrics.py`.
+
+### Por que o WER de glosas vale a pena
+
+O WER **não é uma métrica de tradução** — é a métrica nativa de reconhecimento
+do PHOENIX, e ele mede o head CTC, não o decoder. O valor está no diagnóstico
+que a combinação permite:
+
+| WER de glosas | BLEU | Leitura |
+|---|---|---|
+| bom | ruim | o encoder **vê** os sinais; o decoder não está traduzindo |
+| ruim | ruim | o problema está na **representação de entrada** (extração de landmarks) |
+
+A decomposição em substituições/deleções/inserções refina ainda mais: muitas
+**deleções** apontam para sinais não detectados (mão ausente no esqueleto),
+enquanto muitas **substituições** apontam para confusão entre sinais parecidos.
+São causas diferentes, com soluções diferentes.
+
+### Ressalvas do BERTScore
+
+- **É *reference-only***, e é por isso que se aplica a SLT: compara hipótese e
+  referência sem precisar de sentença-fonte — que aqui não existe (a fonte é um
+  vídeo). Métricas como o COMET, que exigem a tripla (fonte, hipótese,
+  referência), não se aplicam sem contorção.
+- **O idioma é obrigatório** (`--bertscore de` para o PHOENIX, `pt` para o
+  V-LIBRASIL): ele seleciona o modelo de embeddings. Passar o idioma errado
+  produz números sem significado.
+- **Pode premiar fluência sem adequação.** Num corpus de domínio único (o
+  PHOENIX é só previsão do tempo), um modelo que aprendeu apenas o modelo de
+  língua produz alemão plausível sem entender a sinalização — o BLEU pune isso,
+  o BERTScore tende a não punir. Reporte-o **ao lado** do BLEU, nunca em
+  substituição.
+- O escore cru vive numa faixa alta e estreita. `--bertscore-baseline`
+  reescalona para melhorar a legibilidade, mas exige arquivo de baseline para o
+  idioma — que não existe para todos, por isso é opt-in.
 
 ---
 
@@ -95,7 +140,7 @@ Teste: 512 exemplos (data/interim/test.json)
   BLEU-2  : 28.7
   BLEU-3  : 20.5
   BLEU-4  : 15.1
-  METEOR  : 0.3820
+  METEOR  : 38.2000
 
 Predicoes + metricas salvas em: checkpoints/test_metrics.json
 ```
@@ -119,6 +164,13 @@ Predicoes + metricas salvas em: checkpoints/test_metrics.json
 | `--tokenizer`      | (auto)        | Override do tokenizer (padrão: dir do checkpoint, senão o T5). |
 | `--device`         | (auto)        | `cuda` ou `cpu`. |
 | `--out`            | (nenhum)      | JSON de saída com métricas + predições. |
+| `--low-vram`       | desligado     | Pesos em bf16 + offload do encoder do T5 (não usado nesta arquitetura). Ver `LOW_VRAM.md`. |
+| `--wer`            | desligado     | Mede WER de glosas via head CTC (decodificação *greedy*). Exige checkpoint treinado com `--use-ctc` e `gloss_vocab.json`. |
+| `--gloss-vocab`    | (auto)        | Caminho do `gloss_vocab.json` (padrão: diretório do checkpoint). |
+| `--bertscore`      | desligado     | Ativa o BERTScore e define o **idioma** das referências (`de`, `pt`, ...). |
+| `--bertscore-model`| (auto)        | Modelo HF específico, sobrepondo o default do idioma. |
+| `--bertscore-batch-size` | `64`    | Lote do BERTScore; reduza se faltar VRAM. |
+| `--bertscore-baseline` | desligado | Reescalona por baseline (ver ressalvas acima). |
 
 ---
 
@@ -133,7 +185,7 @@ reproduzir os números:
   "test_manifest": "/.../data/interim/test.json",
   "num_examples": 512,
   "gen": { "num_beams": 4, "max_new_tokens": 64 },
-  "metrics": { "BLEU-1": 41.2, "BLEU-2": 28.7, "BLEU-3": 20.5, "BLEU-4": 15.1, "METEOR": 0.382 },
+  "metrics": { "BLEU-1": 41.2, "BLEU-2": 28.7, "BLEU-3": 20.5, "BLEU-4": 15.1, "METEOR": 38.2 },
   "predictions": [
     { "ref": "o menino gosta de jogar bola", "hyp": "o menino gosta de bola" },
     ...

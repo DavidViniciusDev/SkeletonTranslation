@@ -181,6 +181,7 @@ def build_and_train(model_cfg, data_cfg, train_cfg):
 
     model = SLTModel(t5, d_model=model_cfg.d_model, nhead=model_cfg.nhead,
                      num_layers=model_cfg.num_layers, dropout=model_cfg.dropout,
+                     ds_steps=model_cfg.ds_steps,
                      use_ctc=model_cfg.use_ctc,
                      gloss_vocab_size=model_cfg.gloss_vocab_size).to(device)
 

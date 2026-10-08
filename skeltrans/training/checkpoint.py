@@ -24,6 +24,26 @@ def _model_hparams(meta):
     return meta.get("model", meta) if isinstance(meta, dict) else {}
 
 
+def _infer_ds_steps(state_dict, meta_ds_steps):
+    """Deduz ``ds_steps`` dos pesos salvos, e não do config gravado.
+
+    Alguns treinos gravaram ``ds_steps`` no config sem que o trainer o
+    repassasse ao SLTModel: os pesos vieram de um encoder SEM downsampling.
+    Confiar no config montaria convoluções extras com pesos aleatórios
+    (``strict=False`` só avisaria das chaves ausentes). Contar as chaves
+    ``encoder.temporal_ds.N.weight`` reconstrói a arquitetura realmente treinada;
+    checkpoints anteriores à flag não têm essas chaves e caem em 0, como antes.
+    """
+    prefix = "encoder.temporal_ds."
+    idx = {k[len(prefix):].split(".", 1)[0] for k in state_dict
+           if k.startswith(prefix) and k.endswith(".weight")}
+    ds_steps = len(idx)
+    if meta_ds_steps is not None and int(meta_ds_steps) != ds_steps:
+        print(f"[checkpoint] AVISO: config diz ds_steps={meta_ds_steps}, mas os "
+              f"pesos correspondem a ds_steps={ds_steps}; usando {ds_steps}.")
+    return ds_steps
+
+
 def load_model(checkpoint, device, t5_override=None, low_vram=False):
     """Reconstrói o SLTModel a partir de um checkpoint e carrega os pesos.
 
@@ -44,6 +64,8 @@ def load_model(checkpoint, device, t5_override=None, low_vram=False):
     hp = _model_hparams(ckpt.get("args", {}) or {})
     t5_name = t5_override or hp.get("t5_name") or hp.get("t5") or PTT5_NAME
 
+    ds_steps = _infer_ds_steps(ckpt["model"], hp.get("ds_steps"))
+
     t5 = T5ForConditionalGeneration.from_pretrained(t5_name)
     model = SLTModel(
         t5,
@@ -51,10 +73,8 @@ def load_model(checkpoint, device, t5_override=None, low_vram=False):
         nhead=hp.get("nhead", 8),
         num_layers=hp.get("num_layers", 6),
         dropout=hp.get("dropout", 0.2),
-        # checkpoints anteriores à flag de downsampling não têm a chave: o padrão
-        # 0 reconstrói a arquitetura com que eles foram treinados (não o padrão
-        # atual de ModelConfig, que é 2).
-        ds_steps=hp.get("ds_steps", 0),
+        # o state_dict é a fonte da verdade (ver _infer_ds_steps)
+        ds_steps=ds_steps,
         # reconstrói o head CTC apenas se o checkpoint foi treinado com ele
         use_ctc=hp.get("use_ctc", False),
         gloss_vocab_size=hp.get("gloss_vocab_size", 0),

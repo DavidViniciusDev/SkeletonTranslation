@@ -113,10 +113,12 @@ class SLTModel(nn.Module):
         Só os frames válidos entram: `pad_mask` delimita o comprimento real de
         cada item, senão o padding do lote geraria glosas fantasma.
         """
-        enc_out, _ = self._encode(feats, pad_mask)
-        logits = self._ctc_logits(enc_out.last_hidden_state)   # (B, T, V)
-        best = logits.argmax(dim=-1)                           # (B, T)
-        lengths = (~pad_mask).sum(dim=1).tolist()               # frames válidos
+        # com ds_steps>0 os logits têm T' < T posições: os comprimentos vêm da
+        # máscara REDUZIDA devolvida pelo encoder, nunca da original
+        enc_out, _, enc_pad_mask = self._encode(feats, pad_mask)
+        logits = self._ctc_logits(enc_out.last_hidden_state)   # (B, T', V)
+        best = logits.argmax(dim=-1)                           # (B, T')
+        lengths = (~enc_pad_mask).sum(dim=1).tolist()           # frames válidos
         out = []
         for b, n in enumerate(lengths):
             seq, prev = [], None
