@@ -41,6 +41,13 @@ def is_main():
     return not dist.is_initialized() or dist.get_rank() == 0
 
 
+def barrier():
+    """Sincroniza os ranks (no-op sem DDP). Usado quando só o rank 0 trabalha
+    (ex.: métricas de geração) e os demais precisam esperá-lo."""
+    if dist.is_initialized():
+        dist.barrier()
+
+
 def cleanup():
     if dist.is_initialized():
         dist.destroy_process_group()

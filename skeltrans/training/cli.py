@@ -146,6 +146,23 @@ def build_parser():
              "deixam de ser guardadas e sao recomputadas no backward. Corta drasticamente a "
              "VRAM de ativacoes (o gargalo com sequencias longas de frames), ao custo de "
              "~25-30%% de velocidade. Combine com --low-vram. Detalhes em LOW_VRAM.md.")
+
+    # --------------- metricas de traducao durante o treino --------------- #
+    ap.add_argument(
+        "--eval-every", type=int, default=_TC.eval_every,
+        help="A cada N epocas (e na ultima), gera traducoes para o conjunto de VALIDACAO e "
+             "imprime BLEU-1..4 e METEOR, gravando o historico em <out-dir>/eval_history.jsonl. "
+             "0 (padrao) desativa. Requer --val-manifest. E so monitoramento: best.pt e early "
+             "stopping continuam por val_loss. Nunca use o conjunto de teste aqui.")
+    ap.add_argument(
+        "--eval-beams", type=int, default=_TC.eval_beams,
+        help="Largura do beam search na avaliacao durante o treino. Padrao: 1 (greedy, bem "
+             "mais rapido); os valores ficam um pouco abaixo dos do evaluate_slt.py (beam 4), "
+             "mas servem para acompanhar a tendencia.")
+    ap.add_argument(
+        "--eval-max-samples", type=int, default=_TC.eval_max_samples,
+        help="Avalia so os N primeiros exemplos da validacao (deterministico). 0 (padrao) usa "
+             "a validacao inteira. Util para conjuntos grandes ou em DDP (ver MULTI_GPU.md).")
     return ap
 
 
@@ -161,7 +178,10 @@ def args_to_configs(args):
                             out_dir=args.out_dir, device=args.device,
                             patience=args.patience, min_delta=args.min_delta,
                             ctc_weight=args.ctc_weight, low_vram=args.low_vram,
-                            grad_checkpoint=args.grad_checkpoint)
+                            grad_checkpoint=args.grad_checkpoint,
+                            eval_every=args.eval_every, eval_beams=args.eval_beams,
+                            eval_max_samples=args.eval_max_samples,
+                            eval_max_new_tokens=args.max_text_len)
     return model_cfg, data_cfg, train_cfg
 
 
@@ -172,6 +192,10 @@ def main(argv=None):
         return
     if not args.train_manifest:
         sys.exit("Faltou --train-manifest (ou use --smoke-test). Veja o cabecalho do arquivo.")
+    if args.eval_every < 0 or args.eval_beams < 1 or args.eval_max_samples < 0:
+        sys.exit("--eval-every e --eval-max-samples devem ser >= 0 e --eval-beams >= 1.")
+    if args.eval_every and not args.val_manifest:
+        sys.exit("--eval-every requer --val-manifest (as metricas sao medidas na validacao).")
     build_and_train(*args_to_configs(args))
 
 

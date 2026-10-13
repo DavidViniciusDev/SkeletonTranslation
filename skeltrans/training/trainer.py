@@ -1,15 +1,17 @@
 """Loop de treino/avaliação (extraído da antiga função train())."""
 
+import json
 import os
+import sys
 from dataclasses import asdict
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 from skeltrans.training.checkpoint import save_checkpoint
 from skeltrans.training.data import LandmarkTextDataset, make_collate
 from skeltrans.training.device import resolve_device
-from skeltrans.training.distributed import (cleanup, init_distributed,
+from skeltrans.training.distributed import (barrier, cleanup, init_distributed,
                                             is_distributed, is_main,
                                             mean_across_ranks)
 from skeltrans.training.low_vram import (autocast_ctx, bf16_supported,
@@ -33,10 +35,40 @@ def evaluate(model, dl, device, use_bf16=False):
     return mean_across_ranks(total, len(dl), device)
 
 
+@torch.no_grad()
+def generate_metrics(model, tokenizer, dl, device, num_beams=1, max_new_tokens=64,
+                     use_bf16=False):
+    """Gera traduções para `dl` e mede BLEU-1..4 e METEOR (mesmas funções do
+    evaluate_slt.py). `model` é o SLTModel cru (o wrapper DDP não expõe
+    .generate); `dl` usa o collate de avaliação, que devolve os textos.
+    Devolve (metrics, hyps, refs)."""
+    from skeltrans.training.metrics import compute_metrics
+
+    model.eval()
+    # --grad-checkpoint desliga o KV-cache do T5, o que deixa o generate muito
+    # lento; religa só durante a geração e restaura em seguida.
+    t5 = model.t5
+    prev_cache = t5.config.use_cache
+    t5.config.use_cache = True
+    hyps, refs = [], []
+    try:
+        for batch in dl:
+            feats, pad_mask, texts = batch[0].to(device), batch[1].to(device), batch[2]
+            with autocast_ctx(use_bf16):
+                ids = model.generate(feats, pad_mask, max_new_tokens=max_new_tokens,
+                                     num_beams=num_beams)
+            preds = tokenizer.batch_decode(ids, skip_special_tokens=True)
+            hyps.extend(p.strip() for p in preds)
+            refs.extend(t.strip() for t in texts)
+    finally:
+        t5.config.use_cache = prev_cache
+    return compute_metrics(hyps, refs), hyps, refs
+
+
 class Trainer:
     """Treina um SLTModel com AdamW + agenda linear, salvando checkpoints."""
 
-    def __init__(self, model, tokenizer, train_cfg, device, meta=None):
+    def __init__(self, model, tokenizer, train_cfg, device, meta=None, run_info=None):
         self.model = model
         # com DDP, o SLTModel real fica em model.module; é ele que vai no .pt
         self.raw_model = getattr(model, "module", model)
@@ -44,6 +76,8 @@ class Trainer:
         self.cfg = train_cfg
         self.device = device
         self.meta = meta or {}
+        # contexto da execução para o training_config.json (não vai no .pt)
+        self.run_info = run_info or {}
         self.is_main = is_main()  # em DDP, só o rank 0 imprime e salva
         # bf16 só quando --low-vram foi pedido E a GPU suporta (Ampere+).
         low_vram = bool(getattr(train_cfg, "low_vram", False))
@@ -71,10 +105,71 @@ class Trainer:
                                  ctc_weight=getattr(self.cfg, "ctc_weight", 0.0))
         return loss
 
-    def fit(self, train_dl, val_dl=None):
+    def _eval_metrics(self, epoch, eval_dl, val_loss):
+        """Métricas de tradução na validação (--eval-every). Só o rank 0 gera;
+        os demais esperam no barrier. Não interfere em best.pt/early stopping."""
+        cfg = self.cfg
+        if self.is_main:
+            num_beams = getattr(cfg, "eval_beams", 1)
+            metrics, hyps, refs = generate_metrics(
+                self.raw_model, self.tokenizer, eval_dl, self.device,
+                num_beams=num_beams,
+                max_new_tokens=getattr(cfg, "eval_max_new_tokens", 64),
+                use_bf16=self.use_bf16)
+            print(f"[epoch {epoch}] val ({len(hyps)} ex., beams={num_beams}) "
+                  + " ".join(f"{k}={v:.2f}" for k, v in metrics.items()))
+            for h, r in list(zip(hyps, refs))[:2]:   # amostra qualitativa
+                print(f"    ref: {r}\n    hyp: {h}")
+            with open(os.path.join(cfg.out_dir, "eval_history.jsonl"), "a",
+                      encoding="utf-8") as f:
+                f.write(json.dumps({"epoch": epoch, "val_loss": val_loss,
+                                    "num_examples": len(hyps), "num_beams": num_beams,
+                                    **metrics}, ensure_ascii=False) + "\n")
+        barrier()
+
+    def _dump_config(self, optim, total_steps, train_dl, val_dl, eval_dl):
+        """Grava <out_dir>/training_config.json com toda a configuração do treino.
+
+        Best-effort: qualquer erro vira aviso e o treino continua normalmente.
+        """
+        from skeltrans.training.run_info import (environment_info, git_info,
+                                                 parameter_counts,
+                                                 save_training_config)
+        try:
+            run = dict(self.run_info)
+            run.update({
+                "git": git_info(),
+                "environment": environment_info(self.device),
+                "parameters": parameter_counts(self.raw_model),
+                "precision": "bf16 (autocast)" if self.use_bf16 else "fp32",
+                "optimizer": type(optim).__name__,
+                "scheduler": "linear com warmup (get_linear_schedule_with_warmup)",
+                # em DDP, len(train_dl) é o número de passos POR processo
+                "steps_per_epoch": len(train_dl),
+                "total_steps": total_steps,
+                "val_batches": len(val_dl) if val_dl is not None else None,
+                "eval_examples": len(eval_dl.dataset) if eval_dl is not None else None,
+            })
+            path = save_training_config(self.cfg.out_dir, self.meta, run)
+            if path:
+                print(f"Configuracao do treino salva em {path}")
+        except Exception as exc:
+            print(f"[config] AVISO: falha ao montar o training_config.json: {exc}")
+
+    def fit(self, train_dl, val_dl=None, eval_dl=None):
         from transformers import get_linear_schedule_with_warmup
 
         cfg = self.cfg
+        # A decisão de avaliar precisa ser IGUAL em todos os ranks (senão o
+        # barrier fica desemparelhado e o DDP trava): depende de val_dl, que
+        # existe em todos, e não de eval_dl, que só o rank 0 monta.
+        eval_every = (getattr(cfg, "eval_every", 0) or 0) if val_dl is not None else 0
+        if eval_every and self.is_main and eval_dl is None:
+            raise ValueError("eval_every > 0 exige eval_dl no processo principal.")
+        if eval_every and self.is_main:
+            # falha AGORA se faltar sacrebleu/nltk/WordNet, e não depois de N épocas
+            from skeltrans.training.metrics import compute_metrics
+            compute_metrics(["teste"], ["teste"])
         optim = make_optimizer(self.model.parameters(), cfg.lr,
                                low_vram=getattr(cfg, "low_vram", False),
                                verbose=self.is_main)
@@ -82,6 +177,8 @@ class Trainer:
         sched = get_linear_schedule_with_warmup(optim, cfg.warmup_steps, total_steps)
 
         os.makedirs(cfg.out_dir, exist_ok=True)
+        if self.is_main:
+            self._dump_config(optim, total_steps, train_dl, val_dl, eval_dl)
         best_val = float("inf")
         epochs_sem_melhora = 0
         patience = getattr(cfg, "patience", 0) or 0
@@ -114,6 +211,10 @@ class Trainer:
                 if val_loss is not None:
                     msg += f" val_loss={val_loss:.4f}"
                 print(msg)
+
+            # métricas de tradução a cada --eval-every épocas (e na última)
+            if eval_every and (epoch % eval_every == 0 or epoch == cfg.epochs):
+                self._eval_metrics(epoch, eval_dl, val_loss)
 
             # checkpoint da época (rank 0; o estado do modelo é idêntico nos ranks)
             if self.is_main:
@@ -161,6 +262,7 @@ def build_and_train(model_cfg, data_cfg, train_cfg):
     else:
         device = resolve_device(train_cfg.device)
         main = True
+        world = 1
         print(f"Dispositivo: {device}")
 
     tokenizer = AutoTokenizer.from_pretrained(model_cfg.t5_name)
@@ -247,8 +349,44 @@ def build_and_train(model_cfg, data_cfg, train_cfg):
                             sampler=val_sampler,
                             collate_fn=val_collate, num_workers=data_cfg.num_workers)
 
+    # Métricas de geração (--eval-every): DataLoader extra sobre a MESMA
+    # validação, com o collate de avaliação (devolve os textos de referência).
+    # Só o rank 0 gera, então só ele o monta, sobre a validação inteira.
+    eval_dl = None
+    if getattr(train_cfg, "eval_every", 0) and data_cfg.val_manifest and main:
+        from skeltrans.training.evaluate import make_eval_collate
+        eval_ds = LandmarkTextDataset(data_cfg.val_manifest, features_dir=data_cfg.features_dir)
+        n_max = getattr(train_cfg, "eval_max_samples", 0) or 0
+        if n_max and n_max < len(eval_ds):
+            eval_ds = Subset(eval_ds, range(n_max))
+        eval_dl = DataLoader(eval_ds, batch_size=data_cfg.batch_size, shuffle=False,
+                             collate_fn=make_eval_collate(),
+                             num_workers=data_cfg.num_workers)
+        print(f"[eval-every] BLEU/METEOR na validacao a cada {train_cfg.eval_every} "
+              f"epoca(s) | {len(eval_ds)} exemplos | beams={train_cfg.eval_beams}")
+
     meta = {"model": asdict(model_cfg), "data": asdict(data_cfg), "train": asdict(train_cfg)}
+
+    # Contexto da execução para o training_config.json (o meta acima, gravado
+    # nos .pt, fica inalterado). Falhar aqui nunca impede o treino.
+    run_info = {}
     try:
-        Trainer(model, tokenizer, train_cfg, device, meta=meta).fit(train_dl, val_dl)
+        from skeltrans.training.run_info import now_iso
+        run_info = {
+            "started_at": now_iso(),
+            "command": [sys.executable] + sys.argv,
+            "distributed": is_distributed(),
+            "world_size": world,
+            "effective_batch_size": data_cfg.batch_size * world,
+            "train_examples": len(train_ds),
+            "val_examples": len(val_dl.dataset) if val_dl is not None else None,
+        }
+    except Exception as exc:
+        if main:
+            print(f"[config] AVISO: falha ao coletar dados da execucao: {exc}")
+
+    try:
+        Trainer(model, tokenizer, train_cfg, device, meta=meta,
+                run_info=run_info).fit(train_dl, val_dl, eval_dl)
     finally:
         cleanup()

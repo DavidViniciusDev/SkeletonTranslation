@@ -199,6 +199,14 @@ python3 slt_model.py \
 Salva `checkpoints/epochN.pt` a cada época e `checkpoints/best.pt` quando a
 perda de validação melhora (junto com o tokenizer).
 
+No início do treino, grava também `checkpoints/training_config.json` com toda a
+configuração usada: `config` (modelo, dados e treino, as mesmas dataclasses
+gravadas nos `.pt`) e `run` (comando executado, data/hora, commit do git e se
+havia alterações não commitadas, versões de Python/torch/transformers, GPU,
+número de parâmetros, precisão, otimizador, passos por época, total de passos e
+tamanho dos conjuntos). Se algo falhar ao gravar esse arquivo, o treino só
+imprime um aviso e continua.
+
 ### 5.3 Opções principais do treino
 
 | Grupo | Flags |
@@ -207,6 +215,15 @@ perda de validação melhora (junto com o tokenizer).
 | Modelo | `--t5 --d-model --nhead --num-layers --dropout` |
 | Otimização | `--epochs --batch-size --lr --warmup-steps --grad-clip` |
 | Execução | `--num-workers --log-every --out-dir --device` |
+| Monitoramento | `--eval-every --eval-beams --eval-max-samples` |
+
+**Métricas durante o treino (`--eval-every N`):** a cada N épocas (e na última)
+o modelo gera traduções para o conjunto de **validação** (`--val-manifest`) e
+imprime BLEU-1..4 e METEOR, gravando o histórico em
+`<out-dir>/eval_history.jsonl`. É só monitoramento: `best.pt` e o early stopping
+continuam por `val_loss`. O padrão é greedy (`--eval-beams 1`), mais rápido e um
+pouco abaixo do `evaluate_slt.py` (beam 4). O conjunto de **teste** nunca entra
+aqui; ele fica para a avaliação final ([EVALUATION.md](EVALUATION.md)).
 
 Veja a ajuda completa (com explicação de cada flag):
 

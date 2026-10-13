@@ -64,6 +64,10 @@ matematicamente equivalente a treinar em uma GPU com o lote dobrado.
 - **`val_loss` e early stopping:** cada GPU avalia sua fatia da validação e a
   média é global (all-reduce); todos os processos veem o mesmo número e param
   juntos.
+- **`--eval-every` (BLEU/METEOR):** só o processo 0 gera as traduções, sobre a
+  validação inteira; os demais esperam num `barrier`. Se a geração passar do
+  timeout do NCCL (10 min por padrão), os outros processos abortam: em
+  validações grandes, use `--eval-max-samples` ou mantenha `--eval-beams 1`.
 - **`--device` é ignorado** sob `torchrun` (cada processo usa a GPU do seu
   `LOCAL_RANK`). Para escolher QUAIS GPUs usar:
   `CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 ...`
