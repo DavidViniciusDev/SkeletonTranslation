@@ -14,9 +14,10 @@ from skeltrans.training.data import LandmarkTextDataset, make_collate
 from skeltrans.training.data.features import (GROUP_NAMES, compute_input_stats,
                                               feature_dim, parse_groups)
 from skeltrans.training.device import resolve_device
-from skeltrans.training.distributed import (barrier, cleanup, init_distributed,
-                                            is_distributed, is_main,
-                                            mean_across_ranks)
+from skeltrans.training.config import SELECT_METRICS
+from skeltrans.training.distributed import (barrier, broadcast_from_main, cleanup,
+                                            init_distributed, is_distributed,
+                                            is_main, mean_across_ranks)
 from skeltrans.training.low_vram import (autocast_ctx, bf16_supported,
                                          make_optimizer, offload_t5_encoder)
 from skeltrans.training.models import SLTModel
@@ -68,6 +69,38 @@ def generate_metrics(model, tokenizer, dl, device, num_beams=1, max_new_tokens=6
     return compute_metrics(hyps, refs), hyps, refs
 
 
+class BestTracker:
+    """Guarda o melhor valor de um critério e a época em que ocorreu.
+
+    ``higher_is_better`` define o sentido (métricas de tradução: True;
+    val_loss: False). Uma melhora só conta se superar o melhor por mais que
+    ``min_delta``. Começa em ±inf, como o ``best_val`` original: o primeiro
+    valor válido sempre melhora, e NaN nunca melhora.
+    """
+
+    def __init__(self, higher_is_better, min_delta=0.0):
+        self.higher = higher_is_better
+        self.min_delta = min_delta
+        self.best = float("-inf") if higher_is_better else float("inf")
+        self.best_epoch = 0          # 0 = nenhuma melhora ainda
+
+    def update(self, value, epoch):
+        """Registra `value` da época `epoch`; devolve True se melhorou."""
+        if value is None:
+            return False
+        if self.higher:
+            improved = value > self.best + self.min_delta
+        else:
+            improved = value < self.best - self.min_delta
+        if improved:
+            self.best, self.best_epoch = value, epoch
+        return improved
+
+    def epochs_since_best(self, epoch):
+        """Épocas desde a última melhora (conta desde o início se nunca houve)."""
+        return epoch - self.best_epoch
+
+
 class Trainer:
     """Treina um SLTModel com AdamW + agenda linear, salvando checkpoints."""
 
@@ -110,8 +143,10 @@ class Trainer:
 
     def _eval_metrics(self, epoch, eval_dl, val_loss):
         """Métricas de tradução na validação (--eval-every). Só o rank 0 gera;
-        os demais esperam no barrier. Não interfere em best.pt/early stopping."""
+        os demais esperam no barrier. Devolve o dict de métricas no rank 0 e
+        None nos demais (quem decide com elas replica o valor via broadcast)."""
         cfg = self.cfg
+        metrics = None
         if self.is_main:
             num_beams = getattr(cfg, "eval_beams", 1)
             metrics, hyps, refs = generate_metrics(
@@ -129,6 +164,14 @@ class Trainer:
                                     "num_examples": len(hyps), "num_beams": num_beams,
                                     **metrics}, ensure_ascii=False) + "\n")
         barrier()
+        return metrics
+
+    def _save_best(self, name):
+        """Salva o modelo atual como `name` (+ tokenizer) no rank 0."""
+        if self.is_main:
+            save_checkpoint(os.path.join(self.cfg.out_dir, name),
+                            self.raw_model, self._epoch, self.meta)
+            self.tokenizer.save_pretrained(self.cfg.out_dir)
 
     def _dump_config(self, optim, total_steps, train_dl, val_dl, eval_dl):
         """Grava <out_dir>/training_config.json com toda a configuração do treino.
@@ -173,6 +216,17 @@ class Trainer:
             # falha AGORA se faltar sacrebleu/nltk/WordNet, e não depois de N épocas
             from skeltrans.training.metrics import compute_metrics
             compute_metrics(["teste"], ["teste"])
+
+        # Critério do best.pt / early stopping (--select-by). Com uma métrica de
+        # tradução, a val_loss continua acompanhada e salva em best_loss.pt.
+        select_by = getattr(cfg, "select_by", "val_loss") or "val_loss"
+        if select_by not in SELECT_METRICS:
+            raise ValueError(f"select_by desconhecido: {select_by!r} "
+                             f"(opcoes: {', '.join(SELECT_METRICS)}).")
+        metric_key = SELECT_METRICS[select_by]
+        if metric_key and not eval_every:
+            raise ValueError(f"select_by={select_by} exige eval_every > 0 e val_dl "
+                             "(a metrica so e calculada nas epocas de avaliacao).")
         optim = make_optimizer(self.model.parameters(), cfg.lr,
                                low_vram=getattr(cfg, "low_vram", False),
                                verbose=self.is_main)
@@ -182,11 +236,15 @@ class Trainer:
         os.makedirs(cfg.out_dir, exist_ok=True)
         if self.is_main:
             self._dump_config(optim, total_steps, train_dl, val_dl, eval_dl)
-        best_val = float("inf")
-        epochs_sem_melhora = 0
         patience = getattr(cfg, "patience", 0) or 0
         min_delta = getattr(cfg, "min_delta", 0.0) or 0.0
+        # min_delta está na unidade do critério escolhido; com uma métrica, a
+        # val_loss (só para o best_loss.pt) usa qualquer melhora.
+        loss_best = BestTracker(higher_is_better=False,
+                                min_delta=0.0 if metric_key else min_delta)
+        metric_best = BestTracker(higher_is_better=True, min_delta=min_delta)
         for epoch in range(1, cfg.epochs + 1):
+            self._epoch = epoch   # usado por _save_best
             self.model.train()
             # em DDP, o sampler precisa da época para variar o embaralhamento
             if hasattr(train_dl.sampler, "set_epoch"):
@@ -216,8 +274,8 @@ class Trainer:
                 print(msg)
 
             # métricas de tradução a cada --eval-every épocas (e na última)
-            if eval_every and (epoch % eval_every == 0 or epoch == cfg.epochs):
-                self._eval_metrics(epoch, eval_dl, val_loss)
+            evaluated = bool(eval_every) and (epoch % eval_every == 0 or epoch == cfg.epochs)
+            metrics = self._eval_metrics(epoch, eval_dl, val_loss) if evaluated else None
 
             # checkpoint da época (rank 0; o estado do modelo é idêntico nos ranks)
             if self.is_main:
@@ -225,23 +283,43 @@ class Trainer:
                                 self.raw_model, epoch, self.meta)
 
             # seleção do melhor + contagem para early stopping
-            if val_loss is not None:
-                improved = val_loss < best_val - min_delta
-                if improved:
-                    best_val = val_loss
-                    epochs_sem_melhora = 0
+            if metric_key is None:
+                # --select-by val_loss (padrão): comportamento original
+                if val_loss is None:
+                    continue
+                if loss_best.update(val_loss, epoch):
+                    self._save_best("best.pt")
+                    continue
+                sem_melhora = loss_best.epochs_since_best(epoch)
+                if patience > 0 and sem_melhora >= patience:
                     if self.is_main:
-                        save_checkpoint(os.path.join(cfg.out_dir, "best.pt"),
-                                        self.raw_model, epoch, self.meta)
-                        self.tokenizer.save_pretrained(cfg.out_dir)
-                else:
-                    epochs_sem_melhora += 1
-                    if patience > 0 and epochs_sem_melhora >= patience:
-                        if self.is_main:
-                            print(f"[early stopping] parando na epoca {epoch}: "
-                                  f"{epochs_sem_melhora} epocas sem melhora "
-                                  f"(melhor val_loss={best_val:.4f}).")
-                        break
+                        print(f"[early stopping] parando na epoca {epoch}: "
+                              f"{sem_melhora} epocas sem melhora "
+                              f"(melhor val_loss={loss_best.best:.4f}).")
+                    break
+            else:
+                # --select-by <métrica>: a val_loss segue só para o best_loss.pt
+                if val_loss is not None and loss_best.update(val_loss, epoch):
+                    self._save_best("best_loss.pt")
+                if not evaluated:
+                    continue  # a métrica só existe nas épocas de avaliação
+                # valor do rank 0 replicado: todos os ranks decidem igual
+                value = broadcast_from_main(
+                    metrics.get(metric_key) if metrics else None, self.device)
+                if metric_best.update(value, epoch):
+                    self._save_best("best.pt")
+                    if self.is_main:
+                        print(f"[select-by {select_by}] novo melhor {metric_key}="
+                              f"{value:.2f} na epoca {epoch} -> best.pt")
+                    continue
+                sem_melhora = metric_best.epochs_since_best(epoch)
+                if patience > 0 and sem_melhora >= patience:
+                    if self.is_main:
+                        print(f"[early stopping] parando na epoca {epoch}: "
+                              f"{sem_melhora} epocas sem melhora de {metric_key} "
+                              f"(melhor={metric_best.best:.2f} na epoca "
+                              f"{metric_best.best_epoch}).")
+                    break
         if self.is_main:
             print("Treino concluido.")
 

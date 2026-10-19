@@ -74,9 +74,27 @@ class TrainConfig:
     # ~25-30% de velocidade. Desligado por padrão. Ver LOW_VRAM.md.
     grad_checkpoint: bool = False
     # --- métricas de tradução (BLEU/METEOR) na VALIDAÇÃO durante o treino --- #
-    # eval_every=0 desliga (comportamento original). Só informativo: a seleção
-    # do best.pt e o early stopping continuam por val_loss.
+    # eval_every=0 desliga (comportamento original). Por padrão são só
+    # informativas; com select_by != "val_loss" passam a decidir best.pt e o
+    # early stopping.
     eval_every: int = 0
-    eval_beams: int = 1          # 1 = greedy (rápido); o evaluate_slt.py usa 4
+    eval_beams: int = 4          # 1 = greedy (rápido); o evaluate_slt.py usa 4
     eval_max_samples: int = 0    # 0 = validação inteira; N = só os N primeiros
     eval_max_new_tokens: int = 64
+    # --- critério de seleção do best.pt e do early stopping --- #
+    # "val_loss" (padrão) mantém o comportamento original. Uma métrica de
+    # SELECT_METRICS exige eval_every > 0; aí min_delta é medido em pontos da
+    # métrica e o checkpoint de menor val_loss vai para best_loss.pt.
+    select_by: str = "val_loss"
+
+
+# Critérios aceitos por TrainConfig.select_by -> chave no dict de métricas de
+# compute_metrics. val_loss (None) é "menor é melhor"; as métricas, "maior é melhor".
+SELECT_METRICS = {
+    "val_loss": None,
+    "bleu1": "BLEU-1",
+    "bleu2": "BLEU-2",
+    "bleu3": "BLEU-3",
+    "bleu4": "BLEU-4",
+    "meteor": "METEOR",
+}

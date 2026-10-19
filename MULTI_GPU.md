@@ -68,6 +68,9 @@ matematicamente equivalente a treinar em uma GPU com o lote dobrado.
   validação inteira; os demais esperam num `barrier`. Se a geração passar do
   timeout do NCCL (10 min por padrão), os outros processos abortam: em
   validações grandes, use `--eval-max-samples` ou mantenha `--eval-beams 1`.
+- **`--select-by <metrica>`:** a métrica calculada no processo 0 é enviada a
+  todos os processos (broadcast) antes da decisão, então o `best.pt` e o early
+  stopping também ficam iguais em todas as GPUs.
 - **`--device` é ignorado** sob `torchrun` (cada processo usa a GPU do seu
   `LOCAL_RANK`). Para escolher QUAIS GPUs usar:
   `CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 ...`

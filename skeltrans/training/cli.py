@@ -7,7 +7,8 @@ smoke-test ou para o treino. O núcleo (models/trainer) não conhece o argparse.
 import argparse
 import sys
 
-from skeltrans.training.config import DataConfig, ModelConfig, TrainConfig
+from skeltrans.training.config import (SELECT_METRICS, DataConfig, ModelConfig,
+                                       TrainConfig)
 from skeltrans.training.data.features import format_groups, parse_groups
 from skeltrans.training.diagnostics import smoke_test
 from skeltrans.training.trainer import build_and_train
@@ -118,12 +119,22 @@ def build_parser():
              "de gradiente e estabilizar o treino. Padrao: 1.0.")
     ap.add_argument(
         "--patience", type=int, default=_TC.patience,
-        help="Early stopping: numero de epocas consecutivas sem melhora na val_loss antes de "
-             "parar. 0 (padrao) desativa e treina todas as --epochs. Requer --val-manifest.")
+        help="Early stopping: numero de epocas sem melhora no criterio de --select-by "
+             "(padrao: val_loss) antes de parar. 0 (padrao) desativa e treina todas as "
+             "--epochs. Requer --val-manifest. Com uma metrica, conta EPOCAS desde a melhor "
+             "avaliacao (ex.: --eval-every 2 --patience 20 = 10 avaliacoes sem melhora).")
     ap.add_argument(
         "--min-delta", type=float, default=_TC.min_delta,
-        help="Melhora minima na val_loss para reiniciar a paciencia do early stopping. "
-             "Padrao: 0.0 (qualquer melhora conta).")
+        help="Melhora minima no criterio de --select-by para contar como melhora: unidades "
+             "de val_loss, ou pontos da metrica (ex.: 0.1 de BLEU-4). Padrao: 0.0 (qualquer "
+             "melhora conta).")
+    ap.add_argument(
+        "--select-by", default=_TC.select_by, choices=list(SELECT_METRICS),
+        help="Criterio que escolhe o best.pt e decide o early stopping. 'val_loss' (padrao) "
+             "mantem o comportamento original. 'bleu1'..'bleu4' ou 'meteor' usam a metrica "
+             "de traducao medida na validacao pelo --eval-every (obrigatorio nesse caso; usa "
+             "--eval-beams); o checkpoint de menor val_loss passa a ser salvo em best_loss.pt "
+             "para comparacao.")
     ap.add_argument(
         "--ctc-weight", type=float, default=_TC.ctc_weight,
         help="Peso da perda auxiliar de CTC na perda total (ce + peso*ctc). So tem efeito com "
@@ -167,8 +178,9 @@ def build_parser():
         "--eval-every", type=int, default=_TC.eval_every,
         help="A cada N epocas (e na ultima), gera traducoes para o conjunto de VALIDACAO e "
              "imprime BLEU-1..4 e METEOR, gravando o historico em <out-dir>/eval_history.jsonl. "
-             "0 (padrao) desativa. Requer --val-manifest. E so monitoramento: best.pt e early "
-             "stopping continuam por val_loss. Nunca use o conjunto de teste aqui.")
+             "0 (padrao) desativa. Requer --val-manifest. Por padrao e so monitoramento; com "
+             "--select-by <metrica> passa a decidir best.pt e early stopping. Nunca use o "
+             "conjunto de teste aqui.")
     ap.add_argument(
         "--eval-beams", type=int, default=_TC.eval_beams,
         help="Largura do beam search na avaliacao durante o treino. Padrao: 1 (greedy, bem "
@@ -198,7 +210,8 @@ def args_to_configs(args):
                             grad_checkpoint=args.grad_checkpoint,
                             eval_every=args.eval_every, eval_beams=args.eval_beams,
                             eval_max_samples=args.eval_max_samples,
-                            eval_max_new_tokens=args.max_text_len)
+                            eval_max_new_tokens=args.max_text_len,
+                            select_by=args.select_by)
     return model_cfg, data_cfg, train_cfg
 
 
@@ -217,6 +230,9 @@ def main(argv=None):
         sys.exit(f"--extra-features: {exc}")
     if args.eval_every and not args.val_manifest:
         sys.exit("--eval-every requer --val-manifest (as metricas sao medidas na validacao).")
+    if SELECT_METRICS[args.select_by] and not args.eval_every:
+        sys.exit(f"--select-by {args.select_by} requer --eval-every N (a metrica so e "
+                 "calculada nas epocas de avaliacao).")
     build_and_train(*args_to_configs(args))
 
 

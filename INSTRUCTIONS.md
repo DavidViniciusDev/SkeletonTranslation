@@ -196,8 +196,9 @@ python3 slt_model.py \
     --out-dir checkpoints
 ```
 
-Salva `checkpoints/epochN.pt` a cada época e `checkpoints/best.pt` quando a
-perda de validação melhora (junto com o tokenizer).
+Salva `checkpoints/epochN.pt` a cada época e `checkpoints/best.pt` quando o
+critério de seleção melhora (por padrão a perda de validação; ver
+`--select-by` abaixo), junto com o tokenizer.
 
 No início do treino, grava também `checkpoints/training_config.json` com toda a
 configuração usada: `config` (modelo, dados e treino, as mesmas dataclasses
@@ -216,15 +217,41 @@ imprime um aviso e continua.
 | Otimização | `--epochs --batch-size --lr --warmup-steps --grad-clip` |
 | Execução | `--num-workers --log-every --out-dir --device` |
 | Monitoramento | `--eval-every --eval-beams --eval-max-samples` |
+| Seleção e parada | `--select-by --patience --min-delta` |
 | Entrada | `--extra-features --input-norm` (ver [EXTRA_FEATURES.md](EXTRA_FEATURES.md)) |
 
 **Métricas durante o treino (`--eval-every N`):** a cada N épocas (e na última)
 o modelo gera traduções para o conjunto de **validação** (`--val-manifest`) e
 imprime BLEU-1..4 e METEOR, gravando o histórico em
-`<out-dir>/eval_history.jsonl`. É só monitoramento: `best.pt` e o early stopping
-continuam por `val_loss`. O padrão é greedy (`--eval-beams 1`), mais rápido e um
-pouco abaixo do `evaluate_slt.py` (beam 4). O conjunto de **teste** nunca entra
-aqui; ele fica para a avaliação final ([EVALUATION.md](EVALUATION.md)).
+`<out-dir>/eval_history.jsonl`. Por padrão é só monitoramento: `best.pt` e o
+early stopping continuam por `val_loss`. O padrão é greedy (`--eval-beams 1`),
+mais rápido e um pouco abaixo do `evaluate_slt.py` (beam 4). O conjunto de
+**teste** nunca entra aqui; ele fica para a avaliação final
+([EVALUATION.md](EVALUATION.md)).
+
+**Critério de seleção e parada (`--select-by`):** define o que escolhe o
+`best.pt` e o que conta como "melhora" para o early stopping.
+
+| `--select-by` | Sentido | Exige |
+|---|---|---|
+| `val_loss` (padrão) | menor é melhor | `--val-manifest` |
+| `bleu1` · `bleu2` · `bleu3` · `bleu4` · `meteor` | maior é melhor | `--val-manifest` e `--eval-every N` |
+
+Com uma métrica:
+
+- o `best.pt` é a época com a maior métrica no dev, e o checkpoint de menor
+  `val_loss` continua sendo salvo, em `best_loss.pt`, para comparar os dois
+  critérios no mesmo treino;
+- `--patience` conta **épocas** desde a melhor avaliação (com `--eval-every 2
+  --patience 20`, o treino para depois de 10 avaliações seguidas sem melhora);
+- `--min-delta` passa a ser em pontos da métrica (ex.: `0.1` de BLEU-4);
+- a métrica é medida com `--eval-beams` (padrão greedy). Para uma seleção mais
+  fiel ao `evaluate_slt.py`, use `--eval-beams 4`, ao custo de avaliações mais
+  lentas.
+
+```bash
+python3 slt_model.py ... --eval-every 2 --select-by bleu4 --patience 20
+```
 
 Veja a ajuda completa (com explicação de cada flag):
 

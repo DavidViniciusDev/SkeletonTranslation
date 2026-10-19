@@ -48,6 +48,23 @@ def barrier():
         dist.barrier()
 
 
+def broadcast_from_main(value, device):
+    """Envia um float do rank 0 para todos os ranks (no-op sem DDP).
+
+    As métricas de geração são calculadas só no rank 0; para que a seleção do
+    best.pt e o early stopping decidam igual em todos os processos (senão um
+    rank sai do laço e os demais travam no próximo all_reduce), o valor do
+    rank 0 é replicado. ``None`` viaja como NaN e volta como None.
+    """
+    if not dist.is_initialized():
+        return value
+    t = torch.tensor([float("nan") if value is None else float(value)],
+                     dtype=torch.float64, device=device)
+    dist.broadcast(t, src=0)
+    out = t.item()
+    return None if out != out else out   # NaN -> None
+
+
 def cleanup():
     if dist.is_initialized():
         dist.destroy_process_group()
