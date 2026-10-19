@@ -101,8 +101,10 @@ def run(args):
                 "Aponte com --gloss-vocab.")
         print(f"WER de glosas ativo | vocabulario: {len(gloss_vocab)} rotulos")
 
+    # mesma entrada do treino: os grupos de features extras vêm do checkpoint
     ds = LandmarkTextDataset(args.test_manifest, features_dir=args.features_dir,
-                             return_gloss=bool(args.wer))
+                             return_gloss=bool(args.wer),
+                             extra_features=getattr(model, "extra_features", ()))
     dl = DataLoader(ds, batch_size=args.batch_size, shuffle=False,
                     collate_fn=make_eval_collate(with_gloss=bool(args.wer)),
                     num_workers=args.num_workers)

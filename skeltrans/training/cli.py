@@ -8,6 +8,7 @@ import argparse
 import sys
 
 from skeltrans.training.config import DataConfig, ModelConfig, TrainConfig
+from skeltrans.training.data.features import format_groups, parse_groups
 from skeltrans.training.diagnostics import smoke_test
 from skeltrans.training.trainer import build_and_train
 
@@ -79,6 +80,20 @@ def build_parser():
         help="Ativa a supervisao auxiliar de reconhecimento por CTC: um head sobre o encoder "
              "preve a sequencia de glosas (campo 'tokens' do manifesto), forcando o encoder a "
              "codificar identidade de sinal. Desligado por padrao (arquitetura original).")
+    ap.add_argument(
+        "--extra-features", default=_MC.extra_features, metavar="GRUPOS",
+        help="Grupos de features extras, calculados sob demanda a partir das posicoes e "
+             "acrescentados as 1035 colunas de cada frame (separados por virgula): "
+             "A=configuracao de mao (176), B=orientacao da palma (6), C=ponto de "
+             "articulacao (21), D=movimento (2), E=nao manuais (5), F=presenca (4). "
+             "Ex.: --extra-features A,F. Padrao: nenhum (entrada original). Combine com "
+             "--input-norm: as escalas dos grupos sao diferentes. Ver EXTRA_FEATURES.md.")
+    ap.add_argument(
+        "--input-norm", action="store_true", default=_MC.input_norm,
+        help="Normaliza cada coluna da entrada (z-score) com media e desvio calculados no "
+             "conjunto de TREINO antes do treino comecar. As estatisticas ficam no "
+             "checkpoint e sao aplicadas sozinhas na avaliacao e na inferencia. "
+             "Desligado por padrao.")
 
     # ------------------------------ treino ----------------------------- #
     ap.add_argument(
@@ -169,7 +184,9 @@ def build_parser():
 def args_to_configs(args):
     model_cfg = ModelConfig(t5_name=args.t5, d_model=args.d_model, nhead=args.nhead,
                             num_layers=args.num_layers, dropout=args.dropout,
-                            ds_steps=args.ds_steps, use_ctc=args.use_ctc)
+                            ds_steps=args.ds_steps, use_ctc=args.use_ctc,
+                            extra_features=format_groups(args.extra_features),
+                            input_norm=args.input_norm)
     data_cfg = DataConfig(train_manifest=args.train_manifest, val_manifest=args.val_manifest,
                           features_dir=args.features_dir, batch_size=args.batch_size,
                           num_workers=args.num_workers, max_text_len=args.max_text_len)
@@ -194,6 +211,10 @@ def main(argv=None):
         sys.exit("Faltou --train-manifest (ou use --smoke-test). Veja o cabecalho do arquivo.")
     if args.eval_every < 0 or args.eval_beams < 1 or args.eval_max_samples < 0:
         sys.exit("--eval-every e --eval-max-samples devem ser >= 0 e --eval-beams >= 1.")
+    try:
+        parse_groups(args.extra_features)
+    except ValueError as exc:
+        sys.exit(f"--extra-features: {exc}")
     if args.eval_every and not args.val_manifest:
         sys.exit("--eval-every requer --val-manifest (as metricas sao medidas na validacao).")
     build_and_train(*args_to_configs(args))

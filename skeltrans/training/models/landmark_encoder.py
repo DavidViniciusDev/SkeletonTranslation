@@ -42,8 +42,17 @@ def downsampled_lengths(lengths, ds_steps):
 
 class LandmarkEncoder(nn.Module):
     def __init__(self, input_dim=INPUT_DIM, d_model=512, nhead=8, num_layers=6,
-                 dim_feedforward=2048, dropout=0.2, out_dim=None, ds_steps=0):
+                 dim_feedforward=2048, dropout=0.2, out_dim=None, ds_steps=0,
+                 input_norm=False):
         super().__init__()
+        # Normalização por coluna da entrada (z-score com média/desvio do
+        # treino). Fica em buffers: vai no state_dict e é aplicada sozinha na
+        # avaliação/inferência. input_norm=False não cria nada -> state_dict
+        # idêntico ao original.
+        self.input_norm = bool(input_norm)
+        if self.input_norm:
+            self.register_buffer("input_mean", torch.zeros(input_dim))
+            self.register_buffer("input_std", torch.ones(input_dim))
         self.input_proj = nn.Linear(input_dim, d_model)
         # Conv1D temporal (kernel=3) preservando o comprimento T
         self.temporal_conv = nn.Conv1d(d_model, d_model, kernel_size=3, padding=1)
@@ -76,6 +85,14 @@ class LandmarkEncoder(nn.Module):
         # nao cria parametros, entao checkpoints .pt continuam identicos
         self.grad_checkpoint = False
 
+    @torch.no_grad()
+    def set_input_stats(self, mean, std):
+        """Grava média/desvio por coluna (calculados no conjunto de treino)."""
+        if not self.input_norm:
+            raise RuntimeError("encoder criado sem input_norm=True.")
+        self.input_mean.copy_(torch.as_tensor(mean, dtype=self.input_mean.dtype))
+        self.input_std.copy_(torch.as_tensor(std, dtype=self.input_std.dtype))
+
     def downsample_mask(self, pad_mask, t_out):
         """Reconstrói a máscara de padding no comprimento reduzido.
 
@@ -92,12 +109,17 @@ class LandmarkEncoder(nn.Module):
         return idx[None, :] >= lengths[:, None]      # True = padding
 
     def forward(self, feats, pad_mask):
-        """feats: (B, T, INPUT_DIM); pad_mask: (B, T) True onde e padding.
+        """feats: (B, T, input_dim) — 1035, ou mais com --extra-features;
+        pad_mask: (B, T) True onde e padding.
 
         Retorna ``(memory, pad_mask)`` — a máscara acompanha a saída porque o
         comprimento temporal muda quando ``ds_steps > 0``. Com ``ds_steps=0`` a
         máscara devolvida é a própria entrada, inalterada.
         """
+        if self.input_norm:
+            feats = (feats - self.input_mean) / self.input_std
+            # o padding continua exatamente 0 (sem o z-score viraria -media/desvio)
+            feats = feats.masked_fill(pad_mask.unsqueeze(-1), 0.0)
         x = self.input_proj(feats)                 # (B, T, d_model)
         x = self.temporal_conv(x.transpose(1, 2))  # (B, d_model, T) conv sobre o tempo
         for conv in self.temporal_ds:

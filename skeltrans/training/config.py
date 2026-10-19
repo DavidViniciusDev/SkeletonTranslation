@@ -32,6 +32,12 @@ class ModelConfig:
     # o CTC é ativado (tamanho inclui <blank> e <unk>).
     use_ctc: bool = False
     gloss_vocab_size: int = 0
+    # --- entrada do encoder --- #
+    # Grupos de features extras calculados sob demanda ("A,F", ...; ver
+    # training/data/features.py). "" mantém a entrada original de 1035 colunas.
+    extra_features: str = ""
+    # z-score por coluna com média/desvio do TREINO, guardados no checkpoint.
+    input_norm: bool = False
 
 
 @dataclass

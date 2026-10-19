@@ -44,6 +44,25 @@ def _infer_ds_steps(state_dict, meta_ds_steps):
     return ds_steps
 
 
+def _input_spec(state_dict, meta_groups):
+    """Grupos de features extras + normalização de entrada do checkpoint.
+
+    Os grupos vêm do config (eles definem COMO montar a entrada); a dimensão
+    real vem dos pesos do input_proj. As duas precisam bater — senão o
+    checkpoint foi treinado com outra entrada e carregá-lo daria lixo calado.
+    Checkpoints anteriores às flags: sem grupos (1035) e sem normalização.
+    """
+    from skeltrans.training.data.features import feature_dim, parse_groups
+
+    groups = parse_groups(meta_groups or "")
+    w = state_dict.get("encoder.input_proj.weight")
+    if w is not None and w.shape[1] != feature_dim(groups):
+        raise ValueError(
+            f"checkpoint inconsistente: input_proj espera {w.shape[1]} colunas, mas os "
+            f"grupos gravados ({','.join(groups) or 'nenhum'}) geram {feature_dim(groups)}.")
+    return groups, "encoder.input_mean" in state_dict
+
+
 def load_model(checkpoint, device, t5_override=None, low_vram=False):
     """Reconstrói o SLTModel a partir de um checkpoint e carrega os pesos.
 
@@ -65,6 +84,7 @@ def load_model(checkpoint, device, t5_override=None, low_vram=False):
     t5_name = t5_override or hp.get("t5_name") or hp.get("t5") or PTT5_NAME
 
     ds_steps = _infer_ds_steps(ckpt["model"], hp.get("ds_steps"))
+    extra_features, input_norm = _input_spec(ckpt["model"], hp.get("extra_features"))
 
     t5 = T5ForConditionalGeneration.from_pretrained(t5_name)
     model = SLTModel(
@@ -78,6 +98,9 @@ def load_model(checkpoint, device, t5_override=None, low_vram=False):
         # reconstrói o head CTC apenas se o checkpoint foi treinado com ele
         use_ctc=hp.get("use_ctc", False),
         gloss_vocab_size=hp.get("gloss_vocab_size", 0),
+        # mesma entrada do treino; as estatísticas vêm nos buffers do state_dict
+        extra_features=extra_features,
+        input_norm=input_norm,
     )
     # strict=False garante retrocompatibilidade: checkpoints antigos (sem head
     # CTC) carregam num modelo novo, e o head CTC (irrelevante na inferência) é

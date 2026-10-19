@@ -31,6 +31,7 @@ import torch
 from skeltrans.common.geometry import normalize_array
 from skeltrans.extraction.steps.s3_extract_landmarks import process_video
 from skeltrans.training.checkpoint import load_model, load_tokenizer
+from skeltrans.training.data.features import build_input
 from skeltrans.training.device import resolve_device
 
 
@@ -48,11 +49,15 @@ def build_holistic():
     )
 
 
-def video_to_features(video_path, holistic, origin="shoulders"):
-    """video .mp4 -> (T, 1035) pronto para o encoder (Etapa 1, s3+s4)."""
+def video_to_features(video_path, holistic, origin="shoulders", extra_features=()):
+    """video .mp4 -> (T, D) pronto para o encoder (Etapa 1, s3+s4).
+
+    D = 1035, mais as colunas dos `extra_features` com que o modelo foi
+    treinado (mesma função do Dataset, então a entrada é idêntica à do treino).
+    """
     raw, _ = process_video(video_path, holistic)                    # (T,115,3)
     feats = normalize_array(raw.astype(np.float32), origin=origin)  # (T,115,9)
-    return feats.reshape(feats.shape[0], -1)                        # (T,1035)
+    return build_input(feats, extra_features)                       # (T,1035 + extras)
 
 
 @torch.no_grad()
@@ -81,7 +86,8 @@ def run(args):
                 print(f"[ERRO] video nao encontrado: {path}")
                 continue
             try:
-                feats = video_to_features(path, holistic, origin=args.origin)
+                feats = video_to_features(path, holistic, origin=args.origin,
+                                          extra_features=getattr(model, "extra_features", ()))
                 text = translate(model, tokenizer, feats, device,
                                  num_beams=args.num_beams, max_new_tokens=args.max_new_tokens)
             except Exception as e:  # noqa: BLE001 - reporta erro por video sem abortar o lote

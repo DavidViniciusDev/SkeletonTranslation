@@ -5,11 +5,14 @@ import os
 import sys
 from dataclasses import asdict
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader, Subset
 
 from skeltrans.training.checkpoint import save_checkpoint
 from skeltrans.training.data import LandmarkTextDataset, make_collate
+from skeltrans.training.data.features import (GROUP_NAMES, compute_input_stats,
+                                              feature_dim, parse_groups)
 from skeltrans.training.device import resolve_device
 from skeltrans.training.distributed import (barrier, cleanup, init_distributed,
                                             is_distributed, is_main,
@@ -281,11 +284,31 @@ def build_and_train(model_cfg, data_cfg, train_cfg):
             print(f"CTC ativo | vocabulario de glosas: {len(gloss_vocab)} rotulos "
                   f"(inclui <blank>/<unk>) | peso={train_cfg.ctc_weight}")
 
+    extra = parse_groups(model_cfg.extra_features)
     model = SLTModel(t5, d_model=model_cfg.d_model, nhead=model_cfg.nhead,
                      num_layers=model_cfg.num_layers, dropout=model_cfg.dropout,
                      ds_steps=model_cfg.ds_steps,
                      use_ctc=model_cfg.use_ctc,
-                     gloss_vocab_size=model_cfg.gloss_vocab_size).to(device)
+                     gloss_vocab_size=model_cfg.gloss_vocab_size,
+                     extra_features=extra,
+                     input_norm=model_cfg.input_norm).to(device)
+    if main and extra:
+        print(f"[features] extras: {','.join(extra)} "
+              f"({', '.join(GROUP_NAMES[g] for g in extra)}) | entrada = "
+              f"{feature_dim(extra)} colunas")
+
+    # Normalização da entrada: média/desvio por coluna sobre o TREINO. Só o
+    # rank 0 calcula; em DDP o construtor do DistributedDataParallel
+    # transmite os buffers do rank 0 para os demais.
+    if model_cfg.input_norm and main:
+        print("[input-norm] calculando media/desvio por coluna no conjunto de treino ...")
+        stats_ds = LandmarkTextDataset(data_cfg.train_manifest,
+                                       features_dir=data_cfg.features_dir,
+                                       extra_features=extra)
+        mean, std = compute_input_stats(stats_ds, num_workers=data_cfg.num_workers)
+        model.encoder.set_input_stats(mean, std)
+        print(f"[input-norm] {len(stats_ds)} frases | desvio por coluna: "
+              f"min {std.min():.3g}, mediana {float(np.median(std)):.3g}, max {std.max():.3g}")
 
     # O encoder do T5 nunca executa (a memória vem do LandmarkEncoder via
     # encoder_outputs); com --low-vram seus blocos saem da GPU. Em DDP o
@@ -328,7 +351,7 @@ def build_and_train(model_cfg, data_cfg, train_cfg):
     train_collate = make_collate(tokenizer, data_cfg.max_text_len, gloss_vocab=gloss_vocab)
     val_collate = make_collate(tokenizer, data_cfg.max_text_len)
     train_ds = LandmarkTextDataset(data_cfg.train_manifest, features_dir=data_cfg.features_dir,
-                                   return_gloss=model_cfg.use_ctc)
+                                   return_gloss=model_cfg.use_ctc, extra_features=extra)
     # Em DDP, o DistributedSampler dá a cada processo uma fatia distinta do
     # dataset por época (batch_size passa a ser POR GPU).
     train_sampler = None
@@ -340,7 +363,8 @@ def build_and_train(model_cfg, data_cfg, train_cfg):
                           collate_fn=train_collate, num_workers=data_cfg.num_workers)
     val_dl = None
     if data_cfg.val_manifest:
-        val_ds = LandmarkTextDataset(data_cfg.val_manifest, features_dir=data_cfg.features_dir)
+        val_ds = LandmarkTextDataset(data_cfg.val_manifest, features_dir=data_cfg.features_dir,
+                                     extra_features=extra)
         val_sampler = None
         if is_distributed():
             from torch.utils.data.distributed import DistributedSampler
@@ -355,7 +379,8 @@ def build_and_train(model_cfg, data_cfg, train_cfg):
     eval_dl = None
     if getattr(train_cfg, "eval_every", 0) and data_cfg.val_manifest and main:
         from skeltrans.training.evaluate import make_eval_collate
-        eval_ds = LandmarkTextDataset(data_cfg.val_manifest, features_dir=data_cfg.features_dir)
+        eval_ds = LandmarkTextDataset(data_cfg.val_manifest, features_dir=data_cfg.features_dir,
+                                      extra_features=extra)
         n_max = getattr(train_cfg, "eval_max_samples", 0) or 0
         if n_max and n_max < len(eval_ds):
             eval_ds = Subset(eval_ds, range(n_max))

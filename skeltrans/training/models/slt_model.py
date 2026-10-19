@@ -8,7 +8,7 @@ original e o ``forward`` mantém exatamente o mesmo contrato ``(loss, logits)``.
 
 import torch
 
-from skeltrans.common.layout import INPUT_DIM
+from skeltrans.training.data.features import feature_dim, parse_groups
 from skeltrans.training.models.landmark_encoder import LandmarkEncoder
 
 import torch.nn as nn
@@ -17,14 +17,19 @@ import torch.nn.functional as F
 
 class SLTModel(nn.Module):
     def __init__(self, t5, d_model=512, nhead=8, num_layers=6, dropout=0.2,
-                 use_ctc=False, gloss_vocab_size=0, ds_steps=0):
+                 use_ctc=False, gloss_vocab_size=0, ds_steps=0,
+                 extra_features=(), input_norm=False):
         super().__init__()
         self.t5 = t5
         t5_hidden = t5.config.d_model
+        # grupos de features extras (ver training/data/features.py): definem a
+        # dimensão da entrada e ficam no modelo para que avaliação/inferência
+        # montem a MESMA entrada do treino. () -> 1035, a entrada original.
+        self.extra_features = parse_groups(extra_features)
         self.encoder = LandmarkEncoder(
-            input_dim=INPUT_DIM, d_model=d_model, nhead=nhead,
+            input_dim=feature_dim(self.extra_features), d_model=d_model, nhead=nhead,
             num_layers=num_layers, dropout=dropout, out_dim=t5_hidden,
-            ds_steps=ds_steps,
+            ds_steps=ds_steps, input_norm=input_norm,
         )
         # Cabeça CTC opcional (blank fica no índice 0 do vocabulário de glosas).
         self.use_ctc = bool(use_ctc)

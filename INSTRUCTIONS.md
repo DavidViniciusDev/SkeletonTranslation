@@ -216,6 +216,7 @@ imprime um aviso e continua.
 | Otimização | `--epochs --batch-size --lr --warmup-steps --grad-clip` |
 | Execução | `--num-workers --log-every --out-dir --device` |
 | Monitoramento | `--eval-every --eval-beams --eval-max-samples` |
+| Entrada | `--extra-features --input-norm` (ver [EXTRA_FEATURES.md](EXTRA_FEATURES.md)) |
 
 **Métricas durante o treino (`--eval-every N`):** a cada N épocas (e na última)
 o modelo gera traduções para o conjunto de **validação** (`--val-manifest`) e
