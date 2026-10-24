@@ -54,13 +54,38 @@ def _input_spec(state_dict, meta_groups):
     """
     from skeltrans.training.data.features import feature_dim, parse_groups
 
+    from skeltrans.training.models.parts_projection import BASE_DIM
+
     groups = parse_groups(meta_groups or "")
-    w = state_dict.get("encoder.input_proj.weight")
-    if w is not None and w.shape[1] != feature_dim(groups):
+    expected = feature_dim(groups)
+    w = state_dict.get("encoder.input_proj.weight")                 # encoder 'flat'
+    if w is not None:
+        got = w.shape[1]
+    elif _infer_encoder_type(state_dict) == "parts":                # 1035 fixas + fluxo extra
+        extra_w = state_dict.get("encoder.input_proj.extra.0.weight")
+        got = BASE_DIM + (extra_w.shape[1] if extra_w is not None else 0)
+    else:
+        got = expected
+    if got != expected:
         raise ValueError(
-            f"checkpoint inconsistente: input_proj espera {w.shape[1]} colunas, mas os "
-            f"grupos gravados ({','.join(groups) or 'nenhum'}) geram {feature_dim(groups)}.")
+            f"checkpoint inconsistente: input_proj espera {got} colunas, mas os "
+            f"grupos gravados ({','.join(groups) or 'nenhum'}) geram {expected}.")
     return groups, "encoder.input_mean" in state_dict
+
+
+def _infer_encoder_type(state_dict, meta_type=None):
+    """'parts' se os pesos têm a projeção por partes; senão 'flat' (o original).
+
+    Como no ds_steps, os pesos são a fonte da verdade: carregar um 'parts' num
+    encoder 'flat' (ou o contrário) com strict=False deixaria a projeção de
+    entrada com pesos aleatórios sem erro nenhum.
+    """
+    found = "parts" if any(k.startswith("encoder.input_proj.parts.") for k in state_dict) \
+        else "flat"
+    if meta_type and meta_type != found:
+        print(f"[checkpoint] AVISO: config diz encoder_type={meta_type}, mas os pesos "
+              f"correspondem a {found}; usando {found}.")
+    return found
 
 
 def load_model(checkpoint, device, t5_override=None, low_vram=False):
@@ -85,6 +110,7 @@ def load_model(checkpoint, device, t5_override=None, low_vram=False):
 
     ds_steps = _infer_ds_steps(ckpt["model"], hp.get("ds_steps"))
     extra_features, input_norm = _input_spec(ckpt["model"], hp.get("extra_features"))
+    encoder_type = _infer_encoder_type(ckpt["model"], hp.get("encoder_type"))
 
     t5 = T5ForConditionalGeneration.from_pretrained(t5_name)
     model = SLTModel(
@@ -101,6 +127,7 @@ def load_model(checkpoint, device, t5_override=None, low_vram=False):
         # mesma entrada do treino; as estatísticas vêm nos buffers do state_dict
         extra_features=extra_features,
         input_norm=input_norm,
+        encoder_type=encoder_type,
     )
     # strict=False garante retrocompatibilidade: checkpoints antigos (sem head
     # CTC) carregam num modelo novo, e o head CTC (irrelevante na inferência) é

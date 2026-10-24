@@ -18,7 +18,7 @@ import torch.nn.functional as F
 class SLTModel(nn.Module):
     def __init__(self, t5, d_model=512, nhead=8, num_layers=6, dropout=0.2,
                  use_ctc=False, gloss_vocab_size=0, ds_steps=0,
-                 extra_features=(), input_norm=False):
+                 extra_features=(), input_norm=False, encoder_type="flat"):
         super().__init__()
         self.t5 = t5
         t5_hidden = t5.config.d_model
@@ -29,7 +29,7 @@ class SLTModel(nn.Module):
         self.encoder = LandmarkEncoder(
             input_dim=feature_dim(self.extra_features), d_model=d_model, nhead=nhead,
             num_layers=num_layers, dropout=dropout, out_dim=t5_hidden,
-            ds_steps=ds_steps, input_norm=input_norm,
+            ds_steps=ds_steps, input_norm=input_norm, encoder_type=encoder_type,
         )
         # Cabeça CTC opcional (blank fica no índice 0 do vocabulário de glosas).
         self.use_ctc = bool(use_ctc)
@@ -44,7 +44,7 @@ class SLTModel(nn.Module):
         from transformers.modeling_outputs import BaseModelOutput
         # o DataLoader entrega fp32; acompanha o dtype dos pesos (bf16 quando
         # --low-vram converte o modelo na inferência)
-        feats = feats.to(self.encoder.input_proj.weight.dtype)
+        feats = feats.to(next(self.encoder.input_proj.parameters()).dtype)
         # com ds_steps>0 o encoder encurta o eixo temporal e devolve a máscara já
         # reduzida; o attention_mask do T5 e o CTC derivam DESSA máscara, nunca
         # da original, sob pena de atender a padding silenciosamente.

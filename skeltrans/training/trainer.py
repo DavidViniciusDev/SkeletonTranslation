@@ -173,6 +173,32 @@ class Trainer:
                             self.raw_model, self._epoch, self.meta)
             self.tokenizer.save_pretrained(self.cfg.out_dir)
 
+    def _param_groups(self):
+        """Parâmetros para o otimizador, com lr separado se --encoder-lr.
+
+        Sem encoder_lr: todos os parâmetros num grupo só, como no original.
+        Com encoder_lr: o decoder T5 (pré-treinado) fica com `lr` e o encoder
+        de landmarks + head CTC (do zero) com `encoder_lr`. O grupo do T5 vem
+        primeiro, para que o lr do log continue sendo o --lr.
+        """
+        enc_lr = getattr(self.cfg, "encoder_lr", None)
+        if enc_lr is None:
+            return self.model.parameters()
+        m = self.raw_model
+        decoder = list(m.t5.parameters())
+        encoder = list(m.encoder.parameters())
+        if getattr(m, "ctc_head", None) is not None:
+            encoder += list(m.ctc_head.parameters())
+        # todo parâmetro em exatamente um grupo (um parâmetro novo fora de
+        # t5/encoder/ctc_head ficaria sem treinar em silêncio)
+        ids = [id(p) for p in decoder + encoder]
+        assert len(ids) == len(set(ids)) == len(list(m.parameters())), \
+            "parametros do modelo nao cobertos pelos grupos de lr"
+        if self.is_main:
+            print(f"[lr] decoder T5: {self.cfg.lr:.2e} | encoder + CTC: {enc_lr:.2e}")
+        return [{"params": decoder, "lr": self.cfg.lr, "name": "decoder_t5"},
+                {"params": encoder, "lr": enc_lr, "name": "encoder"}]
+
     def _dump_config(self, optim, total_steps, train_dl, val_dl, eval_dl):
         """Grava <out_dir>/training_config.json com toda a configuração do treino.
 
@@ -189,6 +215,12 @@ class Trainer:
                 "parameters": parameter_counts(self.raw_model),
                 "precision": "bf16 (autocast)" if self.use_bf16 else "fp32",
                 "optimizer": type(optim).__name__,
+                # initial_lr: o lr configurado (o "lr" corrente já foi zerado
+                # pelo warmup quando este arquivo é gravado)
+                "param_groups": [{"name": g.get("name", "todos"),
+                                  "lr": g.get("initial_lr", g["lr"]),
+                                  "params": sum(p.numel() for p in g["params"])}
+                                 for g in optim.param_groups],
                 "scheduler": "linear com warmup (get_linear_schedule_with_warmup)",
                 # em DDP, len(train_dl) é o número de passos POR processo
                 "steps_per_epoch": len(train_dl),
@@ -227,7 +259,7 @@ class Trainer:
         if metric_key and not eval_every:
             raise ValueError(f"select_by={select_by} exige eval_every > 0 e val_dl "
                              "(a metrica so e calculada nas epocas de avaliacao).")
-        optim = make_optimizer(self.model.parameters(), cfg.lr,
+        optim = make_optimizer(self._param_groups(), cfg.lr,
                                low_vram=getattr(cfg, "low_vram", False),
                                verbose=self.is_main)
         total_steps = len(train_dl) * cfg.epochs
@@ -260,7 +292,9 @@ class Trainer:
                 running += loss.item()
                 if step % cfg.log_every == 0 and self.is_main:
                     print(f"epoch {epoch} step {step}/{len(train_dl)} "
-                          f"loss {running/step:.4f} lr {sched.get_last_lr()[0]:.2e}")
+                          f"loss {running/step:.4f} lr {sched.get_last_lr()[0]:.2e}"
+                          + (f" enc_lr {sched.get_last_lr()[1]:.2e}"
+                             if len(optim.param_groups) > 1 else ""))
             train_loss = running / max(1, len(train_dl))
 
             # val_loss é global em DDP (all_reduce) -> igual em todos os ranks,
@@ -369,7 +403,14 @@ def build_and_train(model_cfg, data_cfg, train_cfg):
                      use_ctc=model_cfg.use_ctc,
                      gloss_vocab_size=model_cfg.gloss_vocab_size,
                      extra_features=extra,
-                     input_norm=model_cfg.input_norm).to(device)
+                     input_norm=model_cfg.input_norm,
+                     encoder_type=model_cfg.encoder_type).to(device)
+    if main and model_cfg.encoder_type != "flat":
+        proj = model.encoder.input_proj
+        print(f"[encoder] projecao de entrada '{model_cfg.encoder_type}': "
+              f"{len(proj.parts) + (proj.extra is not None)} fluxos x {proj.part_dim} "
+              f"unidades -> d_model={model_cfg.d_model} | "
+              f"{sum(p.numel() for p in proj.parameters()) / 1e6:.2f}M parametros")
     if main and extra:
         print(f"[features] extras: {','.join(extra)} "
               f"({', '.join(GROUP_NAMES[g] for g in extra)}) | entrada = "

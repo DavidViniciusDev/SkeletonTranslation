@@ -23,7 +23,11 @@ import torch
 import torch.nn as nn
 
 from skeltrans.common.layout import INPUT_DIM
+from skeltrans.training.models.parts_projection import PartsProjection
 from skeltrans.training.models.positional_encoding import SinusoidalPositionalEncoding
+
+# Tipos de projeção de entrada (--encoder-type). 'flat' é o original.
+ENCODER_TYPES = ("flat", "parts")
 
 
 def downsampled_lengths(lengths, ds_steps):
@@ -43,8 +47,12 @@ def downsampled_lengths(lengths, ds_steps):
 class LandmarkEncoder(nn.Module):
     def __init__(self, input_dim=INPUT_DIM, d_model=512, nhead=8, num_layers=6,
                  dim_feedforward=2048, dropout=0.2, out_dim=None, ds_steps=0,
-                 input_norm=False):
+                 input_norm=False, encoder_type="flat"):
         super().__init__()
+        if encoder_type not in ENCODER_TYPES:
+            raise ValueError(f"encoder_type desconhecido: {encoder_type!r} "
+                             f"(opcoes: {', '.join(ENCODER_TYPES)}).")
+        self.encoder_type = encoder_type
         # Normalização por coluna da entrada (z-score com média/desvio do
         # treino). Fica em buffers: vai no state_dict e é aplicada sozinha na
         # avaliação/inferência. input_norm=False não cria nada -> state_dict
@@ -53,7 +61,13 @@ class LandmarkEncoder(nn.Module):
         if self.input_norm:
             self.register_buffer("input_mean", torch.zeros(input_dim))
             self.register_buffer("input_std", torch.ones(input_dim))
-        self.input_proj = nn.Linear(input_dim, d_model)
+        # Projeção de entrada: 'flat' = Linear único sobre o frame achatado
+        # (original, state_dict inalterado); 'parts' = uma MLP por parte do
+        # corpo + fusão (ver parts_projection.py). Mesma saída (B, T, d_model).
+        if encoder_type == "parts":
+            self.input_proj = PartsProjection(input_dim, d_model)
+        else:
+            self.input_proj = nn.Linear(input_dim, d_model)
         # Conv1D temporal (kernel=3) preservando o comprimento T
         self.temporal_conv = nn.Conv1d(d_model, d_model, kernel_size=3, padding=1)
 

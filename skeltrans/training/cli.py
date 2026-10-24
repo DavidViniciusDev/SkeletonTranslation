@@ -10,6 +10,7 @@ import sys
 from skeltrans.training.config import (SELECT_METRICS, DataConfig, ModelConfig,
                                        TrainConfig)
 from skeltrans.training.data.features import format_groups, parse_groups
+from skeltrans.training.models.landmark_encoder import ENCODER_TYPES
 from skeltrans.training.diagnostics import smoke_test
 from skeltrans.training.trainer import build_and_train
 
@@ -90,6 +91,13 @@ def build_parser():
              "Ex.: --extra-features A,F. Padrao: nenhum (entrada original). Combine com "
              "--input-norm: as escalas dos grupos sao diferentes. Ver EXTRA_FEATURES.md.")
     ap.add_argument(
+        "--encoder-type", default=_MC.encoder_type, choices=list(ENCODER_TYPES),
+        help="Projecao de entrada do encoder. 'flat' (padrao, o original): um Linear unico "
+             "sobre as 1035 colunas do frame. 'parts': uma MLP por parte do corpo (pose, mao "
+             "esq., mao dir., face, e as --extra-features num fluxo proprio) e uma camada de "
+             "fusao; o resto do encoder nao muda. Checkpoints 'parts' nao carregam em 'flat' "
+             "e vice-versa (o tipo e detectado pelos pesos). Ver ENCODER_PARTS.md.")
+    ap.add_argument(
         "--input-norm", action="store_true", default=_MC.input_norm,
         help="Normaliza cada coluna da entrada (z-score) com media e desvio calculados no "
              "conjunto de TREINO antes do treino comecar. As estatisticas ficam no "
@@ -106,8 +114,15 @@ def build_parser():
              "longas encarecem o passo por causa do padding ao maior T do lote. Padrao: 8.")
     ap.add_argument(
         "--lr", type=float, default=_TC.lr,
-        help="Taxa de aprendizado inicial do AdamW, aplicada a todos os parametros (encoder do "
-             "zero e decoder pre-treinado). Padrao: 3e-5 (tipico de fine-tuning do T5).")
+        help="Taxa de aprendizado inicial do AdamW. Sem --encoder-lr vale para todos os "
+             "parametros (encoder do zero e decoder pre-treinado); com --encoder-lr, so para o "
+             "decoder T5. Padrao: 1e-4.")
+    ap.add_argument(
+        "--encoder-lr", type=float, default=_TC.encoder_lr,
+        help="Taxa de aprendizado separada para o encoder de landmarks e o head CTC, que "
+             "comecam do zero; o decoder T5 pre-treinado fica com --lr. Ex.: --lr 5e-5 "
+             "--encoder-lr 5e-4. O warmup e o decaimento linear valem para os dois. Padrao: "
+             "nenhum (um lr so para tudo, o comportamento original).")
     ap.add_argument(
         "--warmup-steps", type=int, default=_TC.warmup_steps,
         help="Passos de aquecimento em que a taxa sobe linearmente de 0 ate --lr, antes do "
@@ -198,11 +213,12 @@ def args_to_configs(args):
                             num_layers=args.num_layers, dropout=args.dropout,
                             ds_steps=args.ds_steps, use_ctc=args.use_ctc,
                             extra_features=format_groups(args.extra_features),
-                            input_norm=args.input_norm)
+                            input_norm=args.input_norm, encoder_type=args.encoder_type)
     data_cfg = DataConfig(train_manifest=args.train_manifest, val_manifest=args.val_manifest,
                           features_dir=args.features_dir, batch_size=args.batch_size,
                           num_workers=args.num_workers, max_text_len=args.max_text_len)
-    train_cfg = TrainConfig(epochs=args.epochs, lr=args.lr, warmup_steps=args.warmup_steps,
+    train_cfg = TrainConfig(epochs=args.epochs, lr=args.lr, encoder_lr=args.encoder_lr,
+                            warmup_steps=args.warmup_steps,
                             grad_clip=args.grad_clip, log_every=args.log_every,
                             out_dir=args.out_dir, device=args.device,
                             patience=args.patience, min_delta=args.min_delta,
@@ -218,10 +234,13 @@ def args_to_configs(args):
 def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.smoke_test:
-        smoke_test(device=args.device, use_ctc=args.use_ctc, ds_steps=args.ds_steps)
+        smoke_test(device=args.device, use_ctc=args.use_ctc, ds_steps=args.ds_steps,
+                   encoder_type=args.encoder_type)
         return
     if not args.train_manifest:
         sys.exit("Faltou --train-manifest (ou use --smoke-test). Veja o cabecalho do arquivo.")
+    if args.encoder_lr is not None and args.encoder_lr <= 0:
+        sys.exit("--encoder-lr deve ser > 0.")
     if args.eval_every < 0 or args.eval_beams < 1 or args.eval_max_samples < 0:
         sys.exit("--eval-every e --eval-max-samples devem ser >= 0 e --eval-beams >= 1.")
     try:

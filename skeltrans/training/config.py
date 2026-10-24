@@ -38,6 +38,9 @@ class ModelConfig:
     extra_features: str = ""
     # z-score por coluna com média/desvio do TREINO, guardados no checkpoint.
     input_norm: bool = False
+    # Projeção de entrada do encoder: "flat" (Linear único sobre o frame, o
+    # original) ou "parts" (uma MLP por parte do corpo + fusão).
+    encoder_type: str = "flat"
 
 
 @dataclass
@@ -56,6 +59,9 @@ class TrainConfig:
     """Otimização, agenda e checkpointing."""
     epochs: int = 30
     lr: float = 1e-4
+    # lr do encoder de landmarks (+ head CTC), que começa do zero; o decoder T5
+    # pré-treinado fica com `lr`. None -> um lr só para tudo (o original).
+    encoder_lr: Optional[float] = None
     warmup_steps: int = 500
     grad_clip: float = 1.0
     log_every: int = 50

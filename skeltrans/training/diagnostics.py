@@ -6,7 +6,7 @@ from skeltrans.common.layout import INPUT_DIM
 from skeltrans.training.models import SLTModel
 
 
-def smoke_test(device=None, use_ctc=False, ds_steps=0):
+def smoke_test(device=None, use_ctc=False, ds_steps=0, encoder_type="flat"):
     """Valida a arquitetura ponta-a-ponta com um T5 minusculo e dados aleatorios.
 
     `device`: None (auto: CUDA se disponivel) ou 'cpu' para forcar CPU.
@@ -21,7 +21,8 @@ def smoke_test(device=None, use_ctc=False, ds_steps=0):
 
     torch.manual_seed(0)
     dev = torch.device("cuda" if torch.cuda.is_available() and device != "cpu" else "cpu")
-    print(f"[smoke] dispositivo: {dev} | use_ctc={use_ctc} | ds_steps={ds_steps}")
+    print(f"[smoke] dispositivo: {dev} | use_ctc={use_ctc} | ds_steps={ds_steps} | "
+          f"encoder_type={encoder_type}")
 
     # T5 minusculo, inicializado do zero (sem download)
     cfg = T5Config(vocab_size=128, d_model=64, d_ff=128, num_layers=2,
@@ -31,7 +32,7 @@ def smoke_test(device=None, use_ctc=False, ds_steps=0):
     gloss_vocab_size = 12 if use_ctc else 0        # 12 rotulos ficticios (inclui blank)
     model = SLTModel(t5, d_model=32, nhead=4, num_layers=2, dropout=0.2,
                      use_ctc=use_ctc, gloss_vocab_size=gloss_vocab_size,
-                     ds_steps=ds_steps).to(dev)
+                     ds_steps=ds_steps, encoder_type=encoder_type).to(dev)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"[smoke] parametros: {n_params/1e6:.2f}M | encoder d_model=32 -> t5 hidden={cfg.d_model}")
 

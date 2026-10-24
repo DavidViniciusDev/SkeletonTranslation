@@ -213,12 +213,20 @@ imprime um aviso e continua.
 | Grupo | Flags |
 |-------|-------|
 | Dados | `--train-manifest --val-manifest --features-dir --max-text-len` |
-| Modelo | `--t5 --d-model --nhead --num-layers --dropout` |
-| Otimização | `--epochs --batch-size --lr --warmup-steps --grad-clip` |
+| Modelo | `--t5 --d-model --nhead --num-layers --dropout --encoder-type` (ver [ENCODER_PARTS.md](ENCODER_PARTS.md)) |
+| Otimização | `--epochs --batch-size --lr --encoder-lr --warmup-steps --grad-clip` |
 | Execução | `--num-workers --log-every --out-dir --device` |
 | Monitoramento | `--eval-every --eval-beams --eval-max-samples` |
 | Seleção e parada | `--select-by --patience --min-delta` |
 | Entrada | `--extra-features --input-norm` (ver [EXTRA_FEATURES.md](EXTRA_FEATURES.md)) |
+
+**Learning rate separado (`--encoder-lr`):** o encoder de landmarks começa do
+zero, e o decoder T5 já vem pré-treinado. Com `--encoder-lr`, o encoder (e o
+head CTC) usa esse lr, e o decoder fica com `--lr`; por exemplo,
+`--lr 5e-5 --encoder-lr 5e-4`. O warmup e o decaimento linear valem para os
+dois, na mesma proporção. Sem a flag, um lr só vale para tudo, como antes. Os
+dois lrs aparecem no log de cada passo (`lr ... enc_lr ...`) e em
+`run.param_groups` no `training_config.json`.
 
 **Métricas durante o treino (`--eval-every N`):** a cada N épocas (e na última)
 o modelo gera traduções para o conjunto de **validação** (`--val-manifest`) e
