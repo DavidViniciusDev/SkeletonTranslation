@@ -95,8 +95,10 @@ def build_parser():
         help="Projecao de entrada do encoder. 'flat' (padrao, o original): um Linear unico "
              "sobre as 1035 colunas do frame. 'parts': uma MLP por parte do corpo (pose, mao "
              "esq., mao dir., face, e as --extra-features num fluxo proprio) e uma camada de "
-             "fusao; o resto do encoder nao muda. Checkpoints 'parts' nao carregam em 'flat' "
-             "e vice-versa (o tipo e detectado pelos pesos). Ver ENCODER_PARTS.md.")
+             "fusao. 'gcn': camadas de convolucao em grafo sobre o esqueleto (cada ponto e um "
+             "no, os ossos sao arestas) e media por parte do corpo. O resto do encoder nao "
+             "muda. Checkpoints de tipos diferentes nao se carregam entre si (o tipo e "
+             "detectado pelos pesos). Ver ENCODER_PARTS.md e ENCODER_GCN.md.")
     ap.add_argument(
         "--input-norm", action="store_true", default=_MC.input_norm,
         help="Normaliza cada coluna da entrada (z-score) com media e desvio calculados no "

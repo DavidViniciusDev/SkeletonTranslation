@@ -23,11 +23,12 @@ import torch
 import torch.nn as nn
 
 from skeltrans.common.layout import INPUT_DIM
+from skeltrans.training.models.graph_projection import GraphProjection, node_presence
 from skeltrans.training.models.parts_projection import PartsProjection
 from skeltrans.training.models.positional_encoding import SinusoidalPositionalEncoding
 
 # Tipos de projeção de entrada (--encoder-type). 'flat' é o original.
-ENCODER_TYPES = ("flat", "parts")
+ENCODER_TYPES = ("flat", "parts", "gcn")
 
 
 def downsampled_lengths(lengths, ds_steps):
@@ -63,9 +64,13 @@ class LandmarkEncoder(nn.Module):
             self.register_buffer("input_std", torch.ones(input_dim))
         # Projeção de entrada: 'flat' = Linear único sobre o frame achatado
         # (original, state_dict inalterado); 'parts' = uma MLP por parte do
-        # corpo + fusão (ver parts_projection.py). Mesma saída (B, T, d_model).
+        # corpo + fusão (ver parts_projection.py); 'gcn' = camadas GCN sobre o
+        # grafo do esqueleto + pooling por parte (ver graph_projection.py).
+        # Mesma saída (B, T, d_model).
         if encoder_type == "parts":
             self.input_proj = PartsProjection(input_dim, d_model)
+        elif encoder_type == "gcn":
+            self.input_proj = GraphProjection(input_dim, d_model)
         else:
             self.input_proj = nn.Linear(input_dim, d_model)
         # Conv1D temporal (kernel=3) preservando o comprimento T
@@ -130,11 +135,21 @@ class LandmarkEncoder(nn.Module):
         comprimento temporal muda quando ``ds_steps > 0``. Com ``ds_steps=0`` a
         máscara devolvida é a própria entrada, inalterada.
         """
+        # o 'gcn' precisa saber quais pontos existem; depois do z-score o 0 de
+        # um ponto ausente deixa de ser 0, então a presença vem da entrada crua
+        present = node_presence(feats) if self.encoder_type == "gcn" else None
         if self.input_norm:
             feats = (feats - self.input_mean) / self.input_std
             # o padding continua exatamente 0 (sem o z-score viraria -media/desvio)
             feats = feats.masked_fill(pad_mask.unsqueeze(-1), 0.0)
-        x = self.input_proj(feats)                 # (B, T, d_model)
+        if present is not None:
+            # --grad-checkpoint vale também para as camadas GCN (B*T*115 nós)
+            self.input_proj.grad_checkpoint = self.grad_checkpoint
+            # o GCN roda só nos frames reais (o padding sai com o valor de um
+            # frame vazio, idêntico ao que daria calculado)
+            x = self.input_proj(feats, present=present, pad_mask=pad_mask)  # (B, T, d_model)
+        else:
+            x = self.input_proj(feats)                 # (B, T, d_model)
         x = self.temporal_conv(x.transpose(1, 2))  # (B, d_model, T) conv sobre o tempo
         for conv in self.temporal_ds:
             x = self.ds_act(conv(x))               # (B, d_model, T/2) por camada

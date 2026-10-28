@@ -61,7 +61,7 @@ def _input_spec(state_dict, meta_groups):
     w = state_dict.get("encoder.input_proj.weight")                 # encoder 'flat'
     if w is not None:
         got = w.shape[1]
-    elif _infer_encoder_type(state_dict) == "parts":                # 1035 fixas + fluxo extra
+    elif _infer_encoder_type(state_dict) in ("parts", "gcn"):       # 1035 fixas + fluxo extra
         extra_w = state_dict.get("encoder.input_proj.extra.0.weight")
         got = BASE_DIM + (extra_w.shape[1] if extra_w is not None else 0)
     else:
@@ -74,14 +74,18 @@ def _input_spec(state_dict, meta_groups):
 
 
 def _infer_encoder_type(state_dict, meta_type=None):
-    """'parts' se os pesos têm a projeção por partes; senão 'flat' (o original).
+    """'gcn' ou 'parts' conforme as chaves da projeção; senão 'flat' (o original).
 
     Como no ds_steps, os pesos são a fonte da verdade: carregar um 'parts' num
     encoder 'flat' (ou o contrário) com strict=False deixaria a projeção de
     entrada com pesos aleatórios sem erro nenhum.
     """
-    found = "parts" if any(k.startswith("encoder.input_proj.parts.") for k in state_dict) \
-        else "flat"
+    if any(k.startswith("encoder.input_proj.gcn_layers.") for k in state_dict):
+        found = "gcn"
+    elif any(k.startswith("encoder.input_proj.parts.") for k in state_dict):
+        found = "parts"
+    else:
+        found = "flat"
     if meta_type and meta_type != found:
         print(f"[checkpoint] AVISO: config diz encoder_type={meta_type}, mas os pesos "
               f"correspondem a {found}; usando {found}.")

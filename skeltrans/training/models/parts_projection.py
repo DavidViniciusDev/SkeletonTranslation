@@ -52,6 +52,11 @@ class PartsProjection(nn.Module):
         n_streams = len(self.parts) + (1 if self.extra is not None else 0)
         self.fuse = nn.Linear(n_streams * self.part_dim, d_model)
 
+    def describe(self):
+        n = sum(p.numel() for p in self.parameters())
+        return (f"{len(self.parts) + (self.extra is not None)} fluxos x {self.part_dim} "
+                f"unidades | {n / 1e6:.2f}M parametros")
+
     def forward(self, x):
         """x: (B, T, input_dim) -> (B, T, d_model)."""
         outs = [self.parts[name](x[..., c]) for name, c in self.cols.items()]

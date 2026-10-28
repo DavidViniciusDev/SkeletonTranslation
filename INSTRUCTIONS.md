@@ -213,7 +213,7 @@ imprime um aviso e continua.
 | Grupo | Flags |
 |-------|-------|
 | Dados | `--train-manifest --val-manifest --features-dir --max-text-len` |
-| Modelo | `--t5 --d-model --nhead --num-layers --dropout --encoder-type` (ver [ENCODER_PARTS.md](ENCODER_PARTS.md)) |
+| Modelo | `--t5 --d-model --nhead --num-layers --dropout --encoder-type` (ver [ENCODER_PARTS.md](ENCODER_PARTS.md) e [ENCODER_GCN.md](ENCODER_GCN.md)) |
 | Otimização | `--epochs --batch-size --lr --encoder-lr --warmup-steps --grad-clip` |
 | Execução | `--num-workers --log-every --out-dir --device` |
 | Monitoramento | `--eval-every --eval-beams --eval-max-samples` |

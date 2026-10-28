@@ -39,7 +39,8 @@ class ModelConfig:
     # z-score por coluna com média/desvio do TREINO, guardados no checkpoint.
     input_norm: bool = False
     # Projeção de entrada do encoder: "flat" (Linear único sobre o frame, o
-    # original) ou "parts" (uma MLP por parte do corpo + fusão).
+    # original), "parts" (uma MLP por parte do corpo + fusão) ou "gcn"
+    # (convolução em grafo sobre o esqueleto + pooling por parte).
     encoder_type: str = "flat"
 
 

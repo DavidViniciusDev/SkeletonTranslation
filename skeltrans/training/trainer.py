@@ -408,9 +408,7 @@ def build_and_train(model_cfg, data_cfg, train_cfg):
     if main and model_cfg.encoder_type != "flat":
         proj = model.encoder.input_proj
         print(f"[encoder] projecao de entrada '{model_cfg.encoder_type}': "
-              f"{len(proj.parts) + (proj.extra is not None)} fluxos x {proj.part_dim} "
-              f"unidades -> d_model={model_cfg.d_model} | "
-              f"{sum(p.numel() for p in proj.parameters()) / 1e6:.2f}M parametros")
+              f"{proj.describe()} -> d_model={model_cfg.d_model}")
     if main and extra:
         print(f"[features] extras: {','.join(extra)} "
               f"({', '.join(GROUP_NAMES[g] for g in extra)}) | entrada = "

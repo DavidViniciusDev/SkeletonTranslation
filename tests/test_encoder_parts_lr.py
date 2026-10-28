@@ -76,7 +76,7 @@ def test_parts_rejects_short_input():
 
 def test_invalid_encoder_type():
     try:
-        LandmarkEncoder(d_model=8, nhead=2, num_layers=1, encoder_type="gcn")
+        LandmarkEncoder(d_model=8, nhead=2, num_layers=1, encoder_type="xyz")
     except ValueError:
         return
     raise AssertionError("encoder_type invalido deveria falhar")
