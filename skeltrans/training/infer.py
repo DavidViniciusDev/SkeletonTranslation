@@ -33,6 +33,7 @@ from skeltrans.extraction.steps.s3_extract_landmarks import process_video
 from skeltrans.training.checkpoint import load_model, load_tokenizer
 from skeltrans.training.data.features import build_input
 from skeltrans.training.device import resolve_device
+from skeltrans.training.generation import add_generation_args, generation_kwargs
 
 
 def build_holistic():
@@ -61,12 +62,13 @@ def video_to_features(video_path, holistic, origin="shoulders", extra_features=(
 
 
 @torch.no_grad()
-def translate(model, tokenizer, feats_np, device, num_beams=4, max_new_tokens=64):
-    """(T,1035) -> string traduzida."""
+def translate(model, tokenizer, feats_np, device, num_beams=4, max_new_tokens=64,
+              **gen_kwargs):
+    """(T,1035) -> string traduzida. `gen_kwargs`: length_penalty etc."""
     feats = torch.from_numpy(feats_np).unsqueeze(0).to(device)      # (1,T,1035)
     pad_mask = torch.zeros(1, feats.shape[1], dtype=torch.bool, device=device)  # sem padding
     ids = model.generate(feats, pad_mask,
-                         max_new_tokens=max_new_tokens, num_beams=num_beams)
+                         max_new_tokens=max_new_tokens, num_beams=num_beams, **gen_kwargs)
     return tokenizer.batch_decode(ids, skip_special_tokens=True)[0].strip()
 
 
@@ -89,7 +91,8 @@ def run(args):
                 feats = video_to_features(path, holistic, origin=args.origin,
                                           extra_features=getattr(model, "extra_features", ()))
                 text = translate(model, tokenizer, feats, device,
-                                 num_beams=args.num_beams, max_new_tokens=args.max_new_tokens)
+                                 num_beams=args.num_beams, max_new_tokens=args.max_new_tokens,
+                                 **generation_kwargs(args))
             except Exception as e:  # noqa: BLE001 - reporta erro por video sem abortar o lote
                 print(f"[ERRO] {os.path.basename(path)}: {e}")
                 continue
@@ -109,6 +112,7 @@ def build_parser():
                     help="origem da centralizacao (deve casar com o treino; padrao shoulders)")
     ap.add_argument("--num-beams", type=int, default=4)
     ap.add_argument("--max-new-tokens", type=int, default=64)
+    add_generation_args(ap)
     ap.add_argument("--device", default=None, help="cuda|cpu (auto se omitido)")
     ap.add_argument("--low-vram", action="store_true",
                     help="reduz o uso de VRAM: pesos em bfloat16 (GPU Ampere+) e offload do "

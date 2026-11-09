@@ -81,17 +81,27 @@ class SLTModel(nn.Module):
         )
 
     def forward(self, feats, pad_mask, labels,
-                gloss_targets=None, gloss_lengths=None, ctc_weight=0.0):
+                gloss_targets=None, gloss_lengths=None, ctc_weight=0.0,
+                label_smoothing=0.0):
         """Retorna (loss, logits).
 
         Parâmetros de CTC são opcionais: sem eles (ou com o head desativado), o
         comportamento é idêntico ao modelo original — só a perda de tradução.
         Quando o CTC está ativo e os alvos são fornecidos, a perda devolvida é
         ``ce + ctc_weight * ctc``; ``logits`` continua sendo o do decoder.
+
+        ``label_smoothing > 0`` recalcula a CE de tradução com suavização
+        (mesma média sobre os tokens não ignorados que o T5 usa). Com 0 a perda
+        é exatamente a ``out.loss`` do T5, como antes.
         """
         enc_out, attn, enc_pad_mask = self._encode(feats, pad_mask)
         out = self.t5(encoder_outputs=enc_out, attention_mask=attn, labels=labels)
         loss = out.loss
+        if label_smoothing > 0:
+            logits = out.logits
+            loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)).float(),
+                                   labels.reshape(-1), ignore_index=-100,
+                                   label_smoothing=label_smoothing)
         if (self.use_ctc and self.ctc_head is not None
                 and gloss_targets is not None and ctc_weight > 0):
             memory = enc_out.last_hidden_state
@@ -137,9 +147,12 @@ class SLTModel(nn.Module):
         return out
 
     @torch.no_grad()
-    def generate(self, feats, pad_mask, max_new_tokens=64, num_beams=4):
+    def generate(self, feats, pad_mask, max_new_tokens=64, num_beams=4, **gen_kwargs):
+        """Gera os ids da tradução. ``gen_kwargs`` (ex.: ``length_penalty``,
+        ``no_repeat_ngram_size``) vão direto para o ``generate`` do T5; sem
+        eles, valem os padrões do ``generation_config`` do modelo, como antes."""
         enc_out, attn, _ = self._encode(feats, pad_mask)
         return self.t5.generate(
             encoder_outputs=enc_out, attention_mask=attn,
-            max_new_tokens=max_new_tokens, num_beams=num_beams,
+            max_new_tokens=max_new_tokens, num_beams=num_beams, **gen_kwargs,
         )

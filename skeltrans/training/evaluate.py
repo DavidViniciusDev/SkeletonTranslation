@@ -29,6 +29,7 @@ from torch.utils.data import DataLoader
 from skeltrans.training.checkpoint import load_model, load_tokenizer
 from skeltrans.training.data import LandmarkTextDataset
 from skeltrans.training.device import resolve_device
+from skeltrans.training.generation import add_generation_args, generation_kwargs
 from skeltrans.training.metrics import (compute_bertscore, compute_metrics,
                                         compute_wer)
 
@@ -110,13 +111,17 @@ def run(args):
                     num_workers=args.num_workers)
     print(f"Teste: {len(ds)} exemplos ({args.test_manifest})")
 
+    gen_kw = generation_kwargs(args)          # só o que foi informado na CLI
+    if gen_kw:
+        print(f"Decodificacao: beams={args.num_beams} | {gen_kw}")
     hyps, refs = [], []
     gloss_hyps, gloss_refs = [], []
     for batch in dl:
         feats, pad_mask, texts = batch[0], batch[1], batch[2]
         feats, pad_mask = feats.to(device), pad_mask.to(device)
         ids = model.generate(feats, pad_mask,
-                             max_new_tokens=args.max_new_tokens, num_beams=args.num_beams)
+                             max_new_tokens=args.max_new_tokens, num_beams=args.num_beams,
+                             **gen_kw)
         preds = tokenizer.batch_decode(ids, skip_special_tokens=True)
         hyps.extend(p.strip() for p in preds)
         refs.extend(t.strip() for t in texts)
@@ -149,7 +154,8 @@ def run(args):
             "checkpoint": os.path.abspath(args.checkpoint),
             "test_manifest": os.path.abspath(args.test_manifest),
             "num_examples": len(hyps),
-            "gen": {"num_beams": args.num_beams, "max_new_tokens": args.max_new_tokens},
+            "gen": {"num_beams": args.num_beams, "max_new_tokens": args.max_new_tokens,
+                    **gen_kw},
             "metrics": metrics,
             "predictions": [{"ref": r, "hyp": h} for r, h in zip(refs, hyps)],
         }
@@ -177,6 +183,7 @@ def build_parser():
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--num-beams", type=int, default=4)
     ap.add_argument("--max-new-tokens", type=int, default=64)
+    add_generation_args(ap)
     ap.add_argument("--num-workers", type=int, default=2)
     ap.add_argument("--device", default=None, help="cuda|cpu (auto se omitido)")
     ap.add_argument("--low-vram", action="store_true",

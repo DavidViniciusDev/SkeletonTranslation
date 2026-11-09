@@ -157,6 +157,19 @@ def build_parser():
         help="Peso da perda auxiliar de CTC na perda total (ce + peso*ctc). So tem efeito com "
              "--use-ctc. Padrao: 0.3.")
     ap.add_argument(
+        "--label-smoothing", type=float, default=_TC.label_smoothing,
+        help="Label smoothing na perda de traducao do decoder (tipico: 0.1): o alvo deixa de "
+             "ser 100%% no token certo e reparte um pouco da probabilidade entre os demais, "
+             "o que reduz o excesso de confianca num corpus pequeno. So no treino: a val_loss "
+             "continua sendo a cross-entropy pura (comparavel entre execucoes). Padrao: 0 "
+             "(desligado).")
+    ap.add_argument(
+        "--seed", type=int, default=_TC.seed,
+        help="Semente de random/numpy/torch e da ordem dos lotes, para reproduzir uma "
+             "execucao e medir a variacao entre sementes. Na CPU o resultado e identico; na "
+             "GPU fica muito proximo, mas nao bit a bit (algumas operacoes CUDA, como o "
+             "backward do CTC, nao sao deterministicas). Padrao: nenhuma.")
+    ap.add_argument(
         "--max-text-len", type=int, default=_DC.max_text_len,
         help="Comprimento maximo (em tokens) do texto-alvo na tokenizacao; textos maiores sao "
              "truncados. Controla o tamanho dos labels e o custo do decoder. Padrao: 64.")
@@ -229,7 +242,8 @@ def args_to_configs(args):
                             eval_every=args.eval_every, eval_beams=args.eval_beams,
                             eval_max_samples=args.eval_max_samples,
                             eval_max_new_tokens=args.max_text_len,
-                            select_by=args.select_by)
+                            select_by=args.select_by,
+                            label_smoothing=args.label_smoothing, seed=args.seed)
     return model_cfg, data_cfg, train_cfg
 
 
@@ -241,6 +255,8 @@ def main(argv=None):
         return
     if not args.train_manifest:
         sys.exit("Faltou --train-manifest (ou use --smoke-test). Veja o cabecalho do arquivo.")
+    if not 0.0 <= args.label_smoothing < 1.0:
+        sys.exit("--label-smoothing deve estar em [0, 1).")
     if args.encoder_lr is not None and args.encoder_lr <= 0:
         sys.exit("--encoder-lr deve ser > 0.")
     if args.eval_every < 0 or args.eval_beams < 1 or args.eval_max_samples < 0:

@@ -214,11 +214,28 @@ imprime um aviso e continua.
 |-------|-------|
 | Dados | `--train-manifest --val-manifest --features-dir --max-text-len` |
 | Modelo | `--t5 --d-model --nhead --num-layers --dropout --encoder-type` (ver [ENCODER_PARTS.md](ENCODER_PARTS.md) e [ENCODER_GCN.md](ENCODER_GCN.md)) |
-| Otimização | `--epochs --batch-size --lr --encoder-lr --warmup-steps --grad-clip` |
+| Otimização | `--epochs --batch-size --lr --encoder-lr --warmup-steps --grad-clip --label-smoothing` |
+| Reprodutibilidade | `--seed` |
 | Execução | `--num-workers --log-every --out-dir --device` |
 | Monitoramento | `--eval-every --eval-beams --eval-max-samples` |
 | Seleção e parada | `--select-by --patience --min-delta` |
 | Entrada | `--extra-features --input-norm` (ver [EXTRA_FEATURES.md](EXTRA_FEATURES.md)) |
+
+**Label smoothing (`--label-smoothing`):** em vez de exigir 100% de
+probabilidade no token certo, o alvo reparte um pouco (ex.: `0.1`) entre os
+demais tokens. Reduz o excesso de confiança do decoder num corpus pequeno e é
+padrão em tradução de sinais. Vale só no treino: a `val_loss` continua sendo a
+cross-entropy pura, comparável entre execuções. Padrão: `0` (desligado).
+
+**Semente (`--seed N`):** fixa random/numpy/torch e a ordem dos lotes. Na CPU,
+duas execuções com a mesma semente dão pesos idênticos; na GPU ficam muito
+próximas, mas não bit a bit, porque algumas operações CUDA (como o backward do
+CTC) não são determinísticas. Use 2–3 sementes nas configurações finais para
+reportar média e desvio. Sem a flag, nada muda.
+
+**Depois do treino**, sem retreinar: média de checkpoints
+(`tools/average_checkpoints.py`) e ajuste da decodificação na validação
+(`tools/tune_decoding.py`). Ver [EVALUATION.md](EVALUATION.md), seção 7.
 
 **Learning rate separado (`--encoder-lr`):** o encoder de landmarks começa do
 zero, e o decoder T5 já vem pré-treinado. Com `--encoder-lr`, o encoder (e o

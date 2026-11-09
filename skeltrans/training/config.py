@@ -93,6 +93,15 @@ class TrainConfig:
     # SELECT_METRICS exige eval_every > 0; aí min_delta é medido em pontos da
     # métrica e o checkpoint de menor val_loss vai para best_loss.pt.
     select_by: str = "val_loss"
+    # --- regularização da perda de tradução --- #
+    # Label smoothing na cross-entropy do decoder (só no treino; a val_loss
+    # continua sendo a CE pura). 0.0 = desligado (o original).
+    label_smoothing: float = 0.0
+    # --- reprodutibilidade --- #
+    # Semente de random/numpy/torch e da ordem dos lotes. None = sem semente
+    # (o original). Na GPU o resultado fica muito próximo, mas não bit a bit:
+    # algumas operações CUDA (ex.: o backward do CTC) não são determinísticas.
+    seed: Optional[int] = None
 
 
 # Critérios aceitos por TrainConfig.select_by -> chave no dict de métricas de

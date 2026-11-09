@@ -159,6 +159,8 @@ Predicoes + metricas salvas em: checkpoints/test_metrics.json
 | `--batch-size`     | `8`           | Frases por lote na geração. |
 | `--num-beams`      | `4`           | Largura do *beam search*. |
 | `--max-new-tokens` | `64`          | Máximo de tokens gerados por frase. |
+| `--length-penalty` | (do modelo)   | Penalidade de comprimento do *beam search*: > 1 favorece traduções mais longas, < 1 mais curtas. Só com `--num-beams` > 1. |
+| `--no-repeat-ngram-size` | (do modelo) | Proíbe repetir qualquer sequência de N tokens na mesma tradução (ex.: `3`). |
 | `--num-workers`    | `2`           | Processos do DataLoader. |
 | `--t5`             | (auto)        | Override do identificador/checkpoint do T5. |
 | `--tokenizer`      | (auto)        | Override do tokenizer (padrão: dir do checkpoint, senão o T5). |
@@ -204,6 +206,47 @@ reproduzir os números:
   números sejam comparáveis.
 - Para *ablation studies*, salve cada execução com um `--out` distinto
   (ex.: `checkpoints/test_metrics_baseline.json`) e compare os JSONs.
+- **Variação entre execuções:** duas execuções iguais não dão o mesmo BLEU.
+  Treine as configurações finais com 2–3 valores de `--seed` e reporte média
+  e desvio; diferenças menores que ~0,5 de BLEU-4 numa execução só podem ser
+  ruído.
+
+### Ajuste da decodificação (`tools/tune_decoding.py`)
+
+`--num-beams`, `--length-penalty` e `--no-repeat-ngram-size` mudam a tradução
+sem retreinar. Escolha-os **na validação** e aplique a combinação vencedora
+**uma vez** no teste:
+
+```bash
+python3 tools/tune_decoding.py \
+    --checkpoint checkpoints/best.pt \
+    --val-manifest data/interim/dev.json --features-dir ... \
+    --num-beams 4 5 --length-penalty 0.8 1.0 1.2 --no-repeat-ngram-size 0 3 \
+    --out checkpoints/tune_decoding.json
+```
+
+O modelo é carregado uma vez e cada combinação gera a validação inteira (use
+`--max-samples N` para uma varredura rápida). No fim, a ferramenta imprime o
+ranking e as flags prontas para o `evaluate_slt.py`. Sem essas flags, o
+`evaluate_slt.py` usa os padrões do modelo, como antes.
+
+### Média de checkpoints (`tools/average_checkpoints.py`)
+
+A média dos pesos de várias épocas costuma render alguns décimos de BLEU sem
+retreinar. O resultado é um `.pt` comum, avaliado normalmente:
+
+```bash
+# as 5 melhores épocas pelo BLEU-4 de validação (exige --eval-every no treino)
+python3 tools/average_checkpoints.py --dir checkpoints --best 5
+# ou as 5 últimas épocas
+python3 tools/average_checkpoints.py --dir checkpoints --last 5
+
+python3 evaluate_slt.py --checkpoint checkpoints/avg_best5.pt --test-manifest ...
+```
+
+Os pesos são somados um checkpoint por vez, então a memória necessária é a de
+um modelo. A escolha por `--best` usa o `eval_history.jsonl` (validação), nunca
+o teste.
 
 ---
 

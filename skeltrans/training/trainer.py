@@ -41,11 +41,12 @@ def evaluate(model, dl, device, use_bf16=False):
 
 @torch.no_grad()
 def generate_metrics(model, tokenizer, dl, device, num_beams=1, max_new_tokens=64,
-                     use_bf16=False):
+                     use_bf16=False, **gen_kwargs):
     """Gera traduções para `dl` e mede BLEU-1..4 e METEOR (mesmas funções do
     evaluate_slt.py). `model` é o SLTModel cru (o wrapper DDP não expõe
     .generate); `dl` usa o collate de avaliação, que devolve os textos.
-    Devolve (metrics, hyps, refs)."""
+    `gen_kwargs` (length_penalty, no_repeat_ngram_size, ...) vão para o
+    generate. Devolve (metrics, hyps, refs)."""
     from skeltrans.training.metrics import compute_metrics
 
     model.eval()
@@ -60,13 +61,32 @@ def generate_metrics(model, tokenizer, dl, device, num_beams=1, max_new_tokens=6
             feats, pad_mask, texts = batch[0].to(device), batch[1].to(device), batch[2]
             with autocast_ctx(use_bf16):
                 ids = model.generate(feats, pad_mask, max_new_tokens=max_new_tokens,
-                                     num_beams=num_beams)
+                                     num_beams=num_beams, **gen_kwargs)
             preds = tokenizer.batch_decode(ids, skip_special_tokens=True)
             hyps.extend(p.strip() for p in preds)
             refs.extend(t.strip() for t in texts)
     finally:
         t5.config.use_cache = prev_cache
     return compute_metrics(hyps, refs), hyps, refs
+
+
+def seed_everything(seed):
+    """Fixa as sementes de random, numpy e torch (CPU e todas as GPUs) e põe o
+    cuDNN em modo determinístico (--seed).
+
+    Na CPU, duas execuções com a mesma semente dão o mesmo resultado bit a
+    bit. Na GPU ficam muito próximas, mas não idênticas: algumas operações
+    CUDA (ex.: o backward do CTC e somas atômicas na atenção) não têm versão
+    determinística.
+    """
+    import random
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 class BestTracker:
@@ -135,10 +155,14 @@ class Trainer:
         feats = feats.to(self.device)
         pad_mask = pad_mask.to(self.device)
         labels = labels.to(self.device)
+        # label smoothing só no treino (a val_loss do evaluate() é a CE pura);
+        # o argumento só é passado quando ativo, mantendo a chamada original
+        ls = getattr(self.cfg, "label_smoothing", 0.0) or 0.0
+        extra = {"label_smoothing": ls} if ls > 0 else {}
         with autocast_ctx(self.use_bf16):
             loss, _ = self.model(feats, pad_mask, labels,
                                  gloss_targets=gloss, gloss_lengths=glen,
-                                 ctc_weight=getattr(self.cfg, "ctc_weight", 0.0))
+                                 ctc_weight=getattr(self.cfg, "ctc_weight", 0.0), **extra)
         return loss
 
     def _eval_metrics(self, epoch, eval_dl, val_loss):
@@ -380,6 +404,15 @@ def build_and_train(model_cfg, data_cfg, train_cfg):
         world = 1
         print(f"Dispositivo: {device}")
 
+    # --seed: antes de criar o modelo, para fixar também a inicialização do
+    # encoder (que começa do zero). Mesma semente em todos os ranks: o DDP já
+    # replica os pesos do rank 0, e o DistributedSampler recebe a semente.
+    seed = getattr(train_cfg, "seed", None)
+    if seed is not None:
+        seed_everything(seed)
+        if main:
+            print(f"[seed] semente {seed} (random/numpy/torch/ordem dos lotes)")
+
     tokenizer = AutoTokenizer.from_pretrained(model_cfg.t5_name)
     t5 = T5ForConditionalGeneration.from_pretrained(model_cfg.t5_name)
 
@@ -474,10 +507,17 @@ def build_and_train(model_cfg, data_cfg, train_cfg):
     train_sampler = None
     if is_distributed():
         from torch.utils.data.distributed import DistributedSampler
-        train_sampler = DistributedSampler(train_ds, shuffle=True)
+        train_sampler = (DistributedSampler(train_ds, shuffle=True) if seed is None
+                         else DistributedSampler(train_ds, shuffle=True, seed=seed))
+    # com --seed, a ordem dos lotes vem de um gerador próprio (independe de
+    # quantos números aleatórios o resto do código consumiu antes)
+    loader_kw = {}
+    if seed is not None and train_sampler is None:
+        loader_kw["generator"] = torch.Generator().manual_seed(seed)
     train_dl = DataLoader(train_ds, batch_size=data_cfg.batch_size,
                           shuffle=(train_sampler is None), sampler=train_sampler,
-                          collate_fn=train_collate, num_workers=data_cfg.num_workers)
+                          collate_fn=train_collate, num_workers=data_cfg.num_workers,
+                          **loader_kw)
     val_dl = None
     if data_cfg.val_manifest:
         val_ds = LandmarkTextDataset(data_cfg.val_manifest, features_dir=data_cfg.features_dir,
