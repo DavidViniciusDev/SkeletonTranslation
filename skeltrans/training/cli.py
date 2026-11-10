@@ -10,6 +10,7 @@ import sys
 from skeltrans.training.config import (SELECT_METRICS, DataConfig, ModelConfig,
                                        TrainConfig)
 from skeltrans.training.data.features import format_groups, parse_groups
+from skeltrans.training.models.concept_pooling import CONCEPT_BOUNDARIES, TEMPORAL_MODES
 from skeltrans.training.models.landmark_encoder import ENCODER_TYPES
 from skeltrans.training.diagnostics import smoke_test
 from skeltrans.training.trainer import build_and_train
@@ -99,6 +100,35 @@ def build_parser():
              "no, os ossos sao arestas) e media por parte do corpo. O resto do encoder nao "
              "muda. Checkpoints de tipos diferentes nao se carregam entre si (o tipo e "
              "detectado pelos pesos). Ver ENCODER_PARTS.md e ENCODER_GCN.md.")
+    ap.add_argument(
+        "--temporal-mode", default=_MC.temporal_mode, choices=list(TEMPORAL_MODES),
+        help="Como o encoder encurta o eixo do tempo antes do decoder. 'stride' (padrao, o "
+             "original): o --ds-steps junta 2^n frames vizinhos, sem saber onde um sinal "
+             "termina. 'concept': o Transformer de frames alimenta o CTC, cujos disparos "
+             "marcam os sinais; os frames de cada sinal viram 1 vetor (pooling por atencao) e "
+             "um segundo Transformer relaciona os sinais. O decoder recebe uma posicao por "
+             "SINAL. Exige --use-ctc com --ctc-weight > 0. O modo e detectado pelos pesos ao "
+             "carregar o checkpoint. Ver docs/encoders/concept.md.")
+    ap.add_argument(
+        "--concept-layers", type=int, default=_MC.concept_layers,
+        help="So com --temporal-mode concept: camadas do Transformer entre sinais (o andar "
+             "de cima). --num-layers continua sendo o andar de frames. Padrao: 2.")
+    ap.add_argument(
+        "--concept-queries", type=int, default=_MC.concept_queries,
+        help="So com --temporal-mode concept: vetores de memoria por sinal (K). Com K>1 "
+             "cada sinal e resumido por K atencoes diferentes, aliviando o gargalo de "
+             "poucas posicoes por frase. Padrao: 1.")
+    ap.add_argument(
+        "--concept-boundaries", default=_MC.concept_boundaries, choices=list(CONCEPT_BOUNDARIES),
+        help="So com --temporal-mode concept: fonte das fronteiras dos sinais NO TREINO. "
+             "'align' (padrao): alinhamento forcado do CTC com as glosas verdadeiras (sempre "
+             "1 sinal por glosa, inclusive no inicio do treino). 'greedy': argmax do CTC, "
+             "como na inferencia. Validacao e inferencia usam sempre o greedy.")
+    ap.add_argument(
+        "--concept-greedy-prob", type=float, default=_MC.concept_greedy_prob,
+        help="So com --concept-boundaries align: probabilidade de usar as fronteiras do "
+             "greedy num lote de treino mesmo tendo as glosas, para aproximar o treino da "
+             "inferencia (ex.: 0.3). Padrao: 0.")
     ap.add_argument(
         "--input-norm", action="store_true", default=_MC.input_norm,
         help="Normaliza cada coluna da entrada (z-score) com media e desvio calculados no "
@@ -228,7 +258,12 @@ def args_to_configs(args):
                             num_layers=args.num_layers, dropout=args.dropout,
                             ds_steps=args.ds_steps, use_ctc=args.use_ctc,
                             extra_features=format_groups(args.extra_features),
-                            input_norm=args.input_norm, encoder_type=args.encoder_type)
+                            input_norm=args.input_norm, encoder_type=args.encoder_type,
+                            temporal_mode=args.temporal_mode,
+                            concept_layers=args.concept_layers,
+                            concept_queries=args.concept_queries,
+                            concept_boundaries=args.concept_boundaries,
+                            concept_greedy_prob=args.concept_greedy_prob)
     data_cfg = DataConfig(train_manifest=args.train_manifest, val_manifest=args.val_manifest,
                           features_dir=args.features_dir, batch_size=args.batch_size,
                           num_workers=args.num_workers, max_text_len=args.max_text_len)
@@ -247,12 +282,32 @@ def args_to_configs(args):
     return model_cfg, data_cfg, train_cfg
 
 
+def validate_concept_args(args):
+    """Mensagem de erro para combinações inválidas do modo 'concept' (ou None)."""
+    if args.temporal_mode != "concept":
+        return None
+    if not args.use_ctc:
+        return "--temporal-mode concept requer --use-ctc (o CTC define as fronteiras dos sinais)."
+    if args.ctc_weight <= 0:
+        return ("--temporal-mode concept requer --ctc-weight > 0: sem treinar o CTC, as "
+                "fronteiras da validacao e da inferencia (greedy) ficam aleatorias.")
+    if args.concept_layers < 1 or args.concept_queries < 1:
+        return "--concept-layers e --concept-queries devem ser >= 1."
+    if not 0.0 <= args.concept_greedy_prob <= 1.0:
+        return "--concept-greedy-prob deve estar em [0, 1]."
+    return None
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.smoke_test:
         smoke_test(device=args.device, use_ctc=args.use_ctc, ds_steps=args.ds_steps,
-                   encoder_type=args.encoder_type)
+                   encoder_type=args.encoder_type, temporal_mode=args.temporal_mode,
+                   concept_queries=args.concept_queries)
         return
+    concept_error = validate_concept_args(args)
+    if concept_error:
+        sys.exit(concept_error)
     if not args.train_manifest:
         sys.exit("Faltou --train-manifest (ou use --smoke-test). Veja o cabecalho do arquivo.")
     if not 0.0 <= args.label_smoothing < 1.0:

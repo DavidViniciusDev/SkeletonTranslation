@@ -6,7 +6,8 @@ from skeltrans.common.layout import INPUT_DIM
 from skeltrans.training.models import SLTModel
 
 
-def smoke_test(device=None, use_ctc=False, ds_steps=0, encoder_type="flat"):
+def smoke_test(device=None, use_ctc=False, ds_steps=0, encoder_type="flat",
+               temporal_mode="stride", concept_queries=1):
     """Valida a arquitetura ponta-a-ponta com um T5 minusculo e dados aleatorios.
 
     `device`: None (auto: CUDA se disponivel) ou 'cpu' para forcar CPU.
@@ -16,13 +17,17 @@ def smoke_test(device=None, use_ctc=False, ds_steps=0, encoder_type="flat"):
     forward/backward, verifica que a mascara reduzida bate EXATAMENTE com o
     comprimento real do tensor — divergencia aqui faz o modelo atender a padding
     sem erro visivel, so BLEU baixo.
+    `temporal_mode='concept'`: liga o CTC (exigido) e confere que o alinhamento
+    forcado gera exatamente 1 sinal por glosa na memoria do decoder.
     """
     from transformers import T5Config, T5ForConditionalGeneration
 
+    concept = temporal_mode == "concept"
+    use_ctc = use_ctc or concept
     torch.manual_seed(0)
     dev = torch.device("cuda" if torch.cuda.is_available() and device != "cpu" else "cpu")
     print(f"[smoke] dispositivo: {dev} | use_ctc={use_ctc} | ds_steps={ds_steps} | "
-          f"encoder_type={encoder_type}")
+          f"encoder_type={encoder_type} | temporal_mode={temporal_mode}")
 
     # T5 minusculo, inicializado do zero (sem download)
     cfg = T5Config(vocab_size=128, d_model=64, d_ff=128, num_layers=2,
@@ -32,7 +37,8 @@ def smoke_test(device=None, use_ctc=False, ds_steps=0, encoder_type="flat"):
     gloss_vocab_size = 12 if use_ctc else 0        # 12 rotulos ficticios (inclui blank)
     model = SLTModel(t5, d_model=32, nhead=4, num_layers=2, dropout=0.2,
                      use_ctc=use_ctc, gloss_vocab_size=gloss_vocab_size,
-                     ds_steps=ds_steps, encoder_type=encoder_type).to(dev)
+                     ds_steps=ds_steps, encoder_type=encoder_type,
+                     temporal_mode=temporal_mode, concept_queries=concept_queries).to(dev)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"[smoke] parametros: {n_params/1e6:.2f}M | encoder d_model=32 -> t5 hidden={cfg.d_model}")
 
@@ -64,7 +70,9 @@ def smoke_test(device=None, use_ctc=False, ds_steps=0, encoder_type="flat"):
     from skeltrans.training.models.landmark_encoder import downsampled_lengths
 
     with torch.no_grad():
-        memory, enc_mask = model.encoder(feats, pad_mask)
+        # no 'concept' a conferencia do downsampling vale para o andar de frames
+        memory, enc_mask = (model.encoder.encode_frames(feats, pad_mask) if concept
+                            else model.encoder(feats, pad_mask))
     esperado = downsampled_lengths(torch.tensor(lengths), ds_steps)
     # T da saida deriva do T PADDED (o collate usa max das amostras), nao do maior
     # comprimento valido — os dois coincidem aqui, mas a formula correta e esta.
@@ -77,6 +85,17 @@ def smoke_test(device=None, use_ctc=False, ds_steps=0, encoder_type="flat"):
         f"comprimentos validos {obtido.tolist()} != esperado {esperado.tolist()}")
     print(f"[smoke] downsampling OK | T {T} -> {memory.shape[1]} | "
           f"validos por amostra {lengths} -> {esperado.tolist()}")
+
+    if concept:
+        # treino com 'align': exatamente 1 sinal por glosa (x K vetores)
+        model.train()
+        with torch.no_grad():
+            _, _, cmask, _ = model._encode_full(feats, pad_mask, gloss, glen)
+        n = (~cmask).sum(dim=1).cpu()
+        assert torch.equal(n, glen.cpu() * concept_queries), (
+            f"posicoes por frase {n.tolist()} != glosas x K {(glen * concept_queries).tolist()}")
+        print(f"[smoke] conceitos OK | {n.tolist()} posicoes de memoria "
+              f"({S} glosas x {concept_queries} vetor(es))")
 
     # forward + backward
     loss, logits = model(feats, pad_mask, labels,

@@ -214,6 +214,7 @@ imprime um aviso e continua.
 |-------|-------|
 | Dados | `--train-manifest --val-manifest --features-dir --max-text-len` |
 | Modelo | `--t5 --d-model --nhead --num-layers --dropout --encoder-type` (ver [ENCODER_PARTS.md](ENCODER_PARTS.md) e [ENCODER_GCN.md](ENCODER_GCN.md)) |
+| Eixo temporal | `--temporal-mode --concept-layers --concept-queries --concept-boundaries --concept-greedy-prob` (ver [docs/encoders/concept.md](docs/encoders/concept.md)) |
 | Otimização | `--epochs --batch-size --lr --encoder-lr --warmup-steps --grad-clip --label-smoothing` |
 | Reprodutibilidade | `--seed` |
 | Execução | `--num-workers --log-every --out-dir --device` |

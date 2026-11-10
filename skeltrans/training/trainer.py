@@ -437,7 +437,18 @@ def build_and_train(model_cfg, data_cfg, train_cfg):
                      gloss_vocab_size=model_cfg.gloss_vocab_size,
                      extra_features=extra,
                      input_norm=model_cfg.input_norm,
-                     encoder_type=model_cfg.encoder_type).to(device)
+                     encoder_type=model_cfg.encoder_type,
+                     temporal_mode=model_cfg.temporal_mode,
+                     concept_layers=model_cfg.concept_layers,
+                     concept_queries=model_cfg.concept_queries,
+                     concept_boundaries=model_cfg.concept_boundaries,
+                     concept_greedy_prob=model_cfg.concept_greedy_prob).to(device)
+    if main and model_cfg.temporal_mode == "concept":
+        print(f"[concept] memoria por sinal | fronteiras no treino: "
+              f"{model_cfg.concept_boundaries} (greedy p={model_cfg.concept_greedy_prob}); "
+              f"validacao/inferencia: greedy | {model_cfg.num_layers} camadas de frames + "
+              f"{model_cfg.concept_layers} de conceitos | {model_cfg.concept_queries} "
+              f"vetor(es) por sinal")
     if main and model_cfg.encoder_type != "flat":
         proj = model.encoder.input_proj
         print(f"[encoder] projecao de entrada '{model_cfg.encoder_type}': "

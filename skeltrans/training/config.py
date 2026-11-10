@@ -42,6 +42,18 @@ class ModelConfig:
     # original), "parts" (uma MLP por parte do corpo + fusão) ou "gcn"
     # (convolução em grafo sobre o esqueleto + pooling por parte).
     encoder_type: str = "flat"
+    # --- eixo temporal do encoder (ver models/concept_pooling.py) --- #
+    # "stride" (o original): o --ds-steps junta frames vizinhos às cegas.
+    # "concept": uma posição de memória por SINAL, com fronteiras vindas do CTC
+    # (exige use_ctc). concept_layers = Transformer entre sinais; concept_queries
+    # = vetores por sinal; concept_boundaries = fonte das fronteiras no treino
+    # ("align": alinhamento forçado com as glosas; "greedy": argmax do CTC);
+    # concept_greedy_prob = chance de usar o greedy no treino mesmo com glosas.
+    temporal_mode: str = "stride"
+    concept_layers: int = 2
+    concept_queries: int = 1
+    concept_boundaries: str = "align"
+    concept_greedy_prob: float = 0.0
 
 
 @dataclass

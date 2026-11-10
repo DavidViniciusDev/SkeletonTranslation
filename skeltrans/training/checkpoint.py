@@ -92,6 +92,27 @@ def _infer_encoder_type(state_dict, meta_type=None):
     return found
 
 
+def _infer_temporal_spec(state_dict, meta_mode=None):
+    """(temporal_mode, concept_layers, concept_queries) a partir dos pesos.
+
+    Como no encoder_type: carregar um checkpoint 'concept' como 'stride' com
+    strict=False descartaria o pooling e o Transformer de conceitos em
+    silêncio, e o decoder receberia frames em vez de sinais. Checkpoints
+    anteriores à flag não têm essas chaves e caem em 'stride'.
+    """
+    prefix = "encoder.concept_transformer.layers."
+    layers = {k[len(prefix):].split(".", 1)[0] for k in state_dict if k.startswith(prefix)}
+    score = state_dict.get("encoder.concept_pool.score.weight")
+    if score is None:
+        found, n_layers, queries = "stride", 2, 1
+    else:
+        found, n_layers, queries = "concept", len(layers), int(score.shape[0])
+    if meta_mode and meta_mode != found:
+        print(f"[checkpoint] AVISO: config diz temporal_mode={meta_mode}, mas os pesos "
+              f"correspondem a {found}; usando {found}.")
+    return found, n_layers, queries
+
+
 def load_model(checkpoint, device, t5_override=None, low_vram=False):
     """Reconstrói o SLTModel a partir de um checkpoint e carrega os pesos.
 
@@ -115,6 +136,8 @@ def load_model(checkpoint, device, t5_override=None, low_vram=False):
     ds_steps = _infer_ds_steps(ckpt["model"], hp.get("ds_steps"))
     extra_features, input_norm = _input_spec(ckpt["model"], hp.get("extra_features"))
     encoder_type = _infer_encoder_type(ckpt["model"], hp.get("encoder_type"))
+    temporal_mode, concept_layers, concept_queries = _infer_temporal_spec(
+        ckpt["model"], hp.get("temporal_mode"))
 
     t5 = T5ForConditionalGeneration.from_pretrained(t5_name)
     model = SLTModel(
@@ -132,6 +155,11 @@ def load_model(checkpoint, device, t5_override=None, low_vram=False):
         extra_features=extra_features,
         input_norm=input_norm,
         encoder_type=encoder_type,
+        # 'concept' detectado pelos pesos; na avaliação as fronteiras são
+        # sempre as do greedy (concept_boundaries só vale no treino)
+        temporal_mode=temporal_mode,
+        concept_layers=concept_layers,
+        concept_queries=concept_queries,
     )
     # strict=False garante retrocompatibilidade: checkpoints antigos (sem head
     # CTC) carregam num modelo novo, e o head CTC (irrelevante na inferência) é
