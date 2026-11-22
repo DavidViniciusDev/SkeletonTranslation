@@ -221,6 +221,7 @@ imprime um aviso e continua.
 | Monitoramento | `--eval-every --eval-beams --eval-max-samples` |
 | Seleção e parada | `--select-by --patience --min-delta` |
 | Entrada | `--extra-features --input-norm` (ver [EXTRA_FEATURES.md](EXTRA_FEATURES.md)) |
+| Augmentation (só treino) | `--aug-speed --aug-spatial --aug-noise --aug-flip` (ver [AUGMENTATION.md](AUGMENTATION.md)) |
 
 **Label smoothing (`--label-smoothing`):** em vez de exigir 100% de
 probabilidade no token certo, o alvo reparte um pouco (ex.: `0.1`) entre os

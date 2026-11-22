@@ -511,8 +511,18 @@ def build_and_train(model_cfg, data_cfg, train_cfg):
     # (val_loss = só CE, comparável entre configurações).
     train_collate = make_collate(tokenizer, data_cfg.max_text_len, gloss_vocab=gloss_vocab)
     val_collate = make_collate(tokenizer, data_cfg.max_text_len)
+    # augmentation só no Dataset de treino (validação/avaliação/estatísticas sem)
+    from skeltrans.training.data.augment import AugmentConfig
+    aug = AugmentConfig(speed=getattr(data_cfg, "aug_speed", 0.0) or 0.0,
+                        spatial=getattr(data_cfg, "aug_spatial", 0.0) or 0.0,
+                        noise=getattr(data_cfg, "aug_noise", 0.0) or 0.0,
+                        flip=bool(getattr(data_cfg, "aug_flip", False)))
+    if main and aug.enabled:
+        print(f"[augment] treino com velocidade ±{aug.speed:g} | espacial σ={aug.spatial:g} | "
+              f"ruído σ={aug.noise:g} | espelhamento={'sim' if aug.flip else 'não'}")
     train_ds = LandmarkTextDataset(data_cfg.train_manifest, features_dir=data_cfg.features_dir,
-                                   return_gloss=model_cfg.use_ctc, extra_features=extra)
+                                   return_gloss=model_cfg.use_ctc, extra_features=extra,
+                                   augment=aug)
     # Em DDP, o DistributedSampler dá a cada processo uma fatia distinta do
     # dataset por época (batch_size passa a ser POR GPU).
     train_sampler = None

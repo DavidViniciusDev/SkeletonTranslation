@@ -7,6 +7,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from skeltrans.common.layout import N_POINTS
+from skeltrans.training.data.augment import augment as augment_features
 from skeltrans.training.data.features import build_input, parse_groups
 
 
@@ -27,7 +29,7 @@ class LandmarkTextDataset(Dataset):
     _GLOSS_KEYS = ("tokens", "gloss_tokens")
 
     def __init__(self, manifest_path, features_dir=None, return_gloss=False,
-                 extra_features=()):
+                 extra_features=(), augment=None):
         # features_dir sobrepoe a localizacao das .npy: quando informado, cada
         # feature e buscada como features_dir/<basename>. Caso contrario, os
         # caminhos relativos do manifesto sao resolvidos em relacao ao proprio
@@ -40,6 +42,10 @@ class LandmarkTextDataset(Dataset):
         # grupos de features extras (ver features.py), calculados sob demanda e
         # acrescentados ao fim de cada frame. () -> entrada original (1035).
         self.extra_features = parse_groups(extra_features)
+        # augmentation (AugmentConfig, ver augment.py): só o Dataset de TREINO
+        # recebe; validação, avaliação e as estatísticas do --input-norm, não.
+        # None (ou tudo desligado) -> item idêntico ao original.
+        self.augment = augment if (augment is not None and augment.enabled) else None
         with open(manifest_path, encoding="utf-8") as f:
             data = json.load(f)
         # dict com "items" (Passo 4) ou lista pura (legado)
@@ -73,6 +79,13 @@ class LandmarkTextDataset(Dataset):
         feat = self._resolve(self._pick(it, self._FEAT_KEYS, "manifesto"))
         text = self._pick(it, self._TEXT_KEYS, "manifesto")
         arr = np.load(feat).astype(np.float32)            # (T, 115, 9)
+        if self.augment is not None:
+            if arr.ndim == 2:                             # .npy já achatado (T, 1035)
+                arr = arr.reshape(arr.shape[0], N_POINTS, -1)
+            # semente vinda do torch: cada worker do DataLoader tem a sua (e o
+            # --seed a fixa); o numpy global repetiria os sorteios entre workers
+            rng = np.random.default_rng(int(torch.randint(0, 2**62, (1,)).item()))
+            arr = augment_features(arr, self.augment, rng)   # (T', 115, 9)
         if self.extra_features:
             arr = build_input(arr, self.extra_features)   # (T, 1035 + extras)
         elif arr.ndim == 3:

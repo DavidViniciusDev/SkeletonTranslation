@@ -203,6 +203,24 @@ def build_parser():
         "--max-text-len", type=int, default=_DC.max_text_len,
         help="Comprimento maximo (em tokens) do texto-alvo na tokenizacao; textos maiores sao "
              "truncados. Controla o tamanho dos labels e o custo do decoder. Padrao: 64.")
+
+    # ------------- data augmentation (so no treino; ver AUGMENTATION.md) ------------- #
+    ap.add_argument(
+        "--aug-speed", type=float, default=_DC.aug_speed, metavar="F",
+        help="Muda a velocidade de cada frase por interpolacao, com fator sorteado em "
+             "[1-F, 1+F] (ex.: 0.2). Velocidade e aceleracao sao recalculadas. 0 (padrao) desliga.")
+    ap.add_argument(
+        "--aug-spatial", type=float, default=_DC.aug_spatial, metavar="S",
+        help="Rotacao (rad), escala e cisalhamento 2D sorteados com desvio S (ex.: 0.2, o do "
+             "SignCLIP). 0 (padrao) desliga.")
+    ap.add_argument(
+        "--aug-noise", type=float, default=_DC.aug_noise, metavar="S",
+        help="Ruido gaussiano nas posicoes, com desvio S em unidades da largura dos ombros "
+             "(ex.: 0.001, o do SignCLIP). So nos pontos presentes. 0 (padrao) desliga.")
+    ap.add_argument(
+        "--aug-flip", action="store_true", default=_DC.aug_flip,
+        help="Espelha metade das frases, trocando esquerda e direita (maos, pose e rosto). "
+             "Desligado por padrao.")
     ap.add_argument(
         "--num-workers", type=int, default=_DC.num_workers,
         help="Numero de processos do DataLoader para carregar/coletar os .npy em paralelo. "
@@ -266,7 +284,9 @@ def args_to_configs(args):
                             concept_greedy_prob=args.concept_greedy_prob)
     data_cfg = DataConfig(train_manifest=args.train_manifest, val_manifest=args.val_manifest,
                           features_dir=args.features_dir, batch_size=args.batch_size,
-                          num_workers=args.num_workers, max_text_len=args.max_text_len)
+                          num_workers=args.num_workers, max_text_len=args.max_text_len,
+                          aug_speed=args.aug_speed, aug_spatial=args.aug_spatial,
+                          aug_noise=args.aug_noise, aug_flip=args.aug_flip)
     train_cfg = TrainConfig(epochs=args.epochs, lr=args.lr, encoder_lr=args.encoder_lr,
                             warmup_steps=args.warmup_steps,
                             grad_clip=args.grad_clip, log_every=args.log_every,
@@ -314,6 +334,10 @@ def main(argv=None):
         sys.exit("--label-smoothing deve estar em [0, 1).")
     if args.encoder_lr is not None and args.encoder_lr <= 0:
         sys.exit("--encoder-lr deve ser > 0.")
+    if not 0.0 <= args.aug_speed < 1.0:
+        sys.exit("--aug-speed deve estar em [0, 1) (o fator fica em [1-F, 1+F]).")
+    if args.aug_spatial < 0 or args.aug_noise < 0:
+        sys.exit("--aug-spatial e --aug-noise devem ser >= 0.")
     if args.eval_every < 0 or args.eval_beams < 1 or args.eval_max_samples < 0:
         sys.exit("--eval-every e --eval-max-samples devem ser >= 0 e --eval-beams >= 1.")
     try:

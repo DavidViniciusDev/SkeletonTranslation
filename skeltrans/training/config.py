@@ -65,6 +65,12 @@ class DataConfig:
     batch_size: int = 8
     num_workers: int = 4
     max_text_len: int = 64
+    # --- data augmentation dos keypoints, só no treino (ver data/augment.py) --- #
+    # 0/False desliga cada uma (padrão: nenhuma, o comportamento original).
+    aug_speed: float = 0.0      # fator de velocidade em [1 - aug_speed, 1 + aug_speed]
+    aug_spatial: float = 0.0    # desvio de rotação (rad) / escala / cisalhamento 2D
+    aug_noise: float = 0.0      # desvio do ruído gaussiano (unidade: largura dos ombros)
+    aug_flip: bool = False      # espelhamento com troca esquerda/direita (prob. 0,5)
 
 
 @dataclass
