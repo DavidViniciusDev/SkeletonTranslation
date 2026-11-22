@@ -28,36 +28,51 @@ import os
 import numpy as np
 import torch
 
-from skeltrans.common.geometry import normalize_array
-from skeltrans.extraction.steps.s3_extract_landmarks import process_video
+from skeltrans.common.geometry import normalize_array, parse_aspect
+from skeltrans.extraction.steps.s3_extract_landmarks import (  # noqa: F401 (reexporta)
+    build_holistic, fresh_holistic, process_video)
 from skeltrans.training.checkpoint import load_model, load_tokenizer
 from skeltrans.training.data.features import build_input
 from skeltrans.training.device import resolve_device
 from skeltrans.training.generation import add_generation_args, generation_kwargs
 
 
-def build_holistic():
-    """Instancia o MediaPipe Holistic com a mesma config da extracao (s3)."""
-    os.environ.setdefault("GLOG_minloglevel", "2")
-    import mediapipe as mp
+def video_aspect(video_path):
+    """Proporção largura/altura de um vídeo, lida dos metadados (OpenCV)."""
+    import cv2
 
-    return mp.solutions.holistic.Holistic(
-        static_image_mode=False,
-        model_complexity=2,
-        refine_face_landmarks=True,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
-    )
+    cap = cv2.VideoCapture(video_path)
+    try:
+        w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+        h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    finally:
+        cap.release()
+    if not (w > 0 and h > 0):
+        raise IOError(f"nao foi possivel ler a resolucao do video: {video_path}")
+    return w / h
 
 
-def video_to_features(video_path, holistic, origin="shoulders", extra_features=()):
+def resolve_aspect(spec, video_path):
+    """--aspect -> proporção a usar: None (sem correção), 'auto' ou 'LxA'."""
+    if not spec:
+        return None
+    if str(spec).strip().lower() == "auto":
+        return video_aspect(video_path)
+    return parse_aspect(spec)
+
+
+def video_to_features(video_path, holistic, origin="shoulders", extra_features=(),
+                      aspect=None):
     """video .mp4 -> (T, D) pronto para o encoder (Etapa 1, s3+s4).
 
     D = 1035, mais as colunas dos `extra_features` com que o modelo foi
     treinado (mesma função do Dataset, então a entrada é idêntica à do treino).
+    `aspect` (largura/altura) aplica a mesma correção de proporção do s4
+    --aspect; precisa casar com a usada nos dados de treino.
     """
     raw, _ = process_video(video_path, holistic)                    # (T,115,3)
-    feats = normalize_array(raw.astype(np.float32), origin=origin)  # (T,115,9)
+    feats = normalize_array(raw.astype(np.float32), origin=origin,
+                            aspect=aspect)                          # (T,115,9)
     return build_input(feats, extra_features)                       # (T,1035 + extras)
 
 
@@ -88,8 +103,11 @@ def run(args):
                 print(f"[ERRO] video nao encontrado: {path}")
                 continue
             try:
+                # cada vídeo começa sem o estado de rastreamento do anterior
+                holistic = fresh_holistic(holistic)
                 feats = video_to_features(path, holistic, origin=args.origin,
-                                          extra_features=getattr(model, "extra_features", ()))
+                                          extra_features=getattr(model, "extra_features", ()),
+                                          aspect=resolve_aspect(args.aspect, path))
                 text = translate(model, tokenizer, feats, device,
                                  num_beams=args.num_beams, max_new_tokens=args.max_new_tokens,
                                  **generation_kwargs(args))
@@ -110,6 +128,11 @@ def build_parser():
     ap.add_argument("--tokenizer", default=None, help="override do tokenizer")
     ap.add_argument("--origin", choices=["shoulders", "nose"], default="shoulders",
                     help="origem da centralizacao (deve casar com o treino; padrao shoulders)")
+    ap.add_argument("--aspect", default=None, metavar="auto|LxA",
+                    help="correcao de proporcao da imagem antes de normalizar, igual ao "
+                         "--aspect do s4: 'auto' le a resolucao de cada video; 'LxA' fixa um "
+                         "valor. Use so se os dados de TREINO foram normalizados com --aspect. "
+                         "Sem a flag: comportamento original.")
     ap.add_argument("--num-beams", type=int, default=4)
     ap.add_argument("--max-new-tokens", type=int, default=64)
     add_generation_args(ap)

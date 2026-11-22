@@ -26,7 +26,8 @@ para salvar a visibilidade da pose num arquivo paralelo *_pose_vis.npy (T, 33).
 
 Processamento paralelo: usa um pool de PROCESSOS (padrao 8). O MediaPipe Holistic
 nao e thread-safe e e CPU-bound, entao processos (e nao threads) dao speedup real;
-cada processo cria sua propria instancia do Holistic. O progresso e exibido ao vivo.
+cada processo cria sua propria instancia do Holistic, e o estado de rastreamento
+e zerado antes de cada video (ver fresh_holistic). O progresso e exibido ao vivo.
 
 Uso:
     python3 extract_landmarks.py                 # processa tudo (com resume), 8 processos
@@ -197,16 +198,16 @@ def out_name(video_path):
 # ---------------------------------------------------------------------------
 # Worker de processo (pool)
 # ---------------------------------------------------------------------------
-_WORKER_HOLISTIC = None  # instancia por processo (criada uma unica vez)
+def build_holistic():
+    """Instancia o MediaPipe Holistic com a configuracao da extracao.
 
-
-def _init_worker():
-    """Inicializador de cada processo: cria uma instancia propria do Holistic."""
-    global _WORKER_HOLISTIC
+    Fonte unica da configuracao: o infer.py usa esta mesma funcao, para que a
+    inferencia extraia os landmarks exatamente como o treino.
+    """
     os.environ.setdefault("GLOG_minloglevel", "2")
     import mediapipe as mp
 
-    _WORKER_HOLISTIC = mp.solutions.holistic.Holistic(
+    return mp.solutions.holistic.Holistic(
         static_image_mode=False,
         model_complexity=2,
         refine_face_landmarks=True,
@@ -215,12 +216,46 @@ def _init_worker():
     )
 
 
+def fresh_holistic(holistic, factory=None):
+    """Devolve um Holistic sem estado de video anterior.
+
+    Em modo video (static_image_mode=False) o Holistic guarda estado entre
+    frames: as regioes rastreadas de corpo e maos e o filtro de suavizacao da
+    pose. Reaproveitar a instancia de um video para o seguinte fazia os
+    primeiros frames herdarem o estado do ULTIMO frame do video anterior (outra
+    pessoa, outra cena), e o resultado de um video passava a depender de qual
+    video o mesmo processo tratou antes (logo, do --workers e da ordem).
+
+    Usa o reset() do MediaPipe quando existe; senao fecha e recria a instancia.
+    """
+    reset = getattr(holistic, "reset", None)
+    if callable(reset):
+        reset()
+        return holistic
+    close = getattr(holistic, "close", None)
+    if callable(close):
+        close()
+    return (factory or build_holistic)()
+
+
+_WORKER_HOLISTIC = None  # instancia por processo; zerada antes de cada video
+
+
+def _init_worker():
+    """Inicializador de cada processo: cria uma instancia propria do Holistic."""
+    global _WORKER_HOLISTIC
+    _WORKER_HOLISTIC = build_holistic()
+
+
 def _process_one(task):
     """Processa um video (executado em processo worker). Retorna (vid, status, info)."""
+    global _WORKER_HOLISTIC
     vid, real, dst, out_dir, with_visibility = task
     try:
         from skeltrans.extraction.frame_sources import open_frames
 
+        # cada video comeca sem o estado de rastreamento do video anterior
+        _WORKER_HOLISTIC = fresh_holistic(_WORKER_HOLISTIC)
         arr, vis = process_frames(open_frames(real), _WORKER_HOLISTIC, with_visibility)
         np.save(dst, arr)
         if vis is not None:

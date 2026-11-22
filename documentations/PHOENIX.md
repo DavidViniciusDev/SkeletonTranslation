@@ -265,6 +265,16 @@ tr '\r' '\n' < extraction.phoenix.log | grep -a 'vid/s' | tail -1
 
 Se cair, **reexecute o mesmo comando** — o s3 pula os `.npy` que já existem.
 
+> **Correção (nov/2026): estado do Holistic entre vídeos.** Até então cada
+> processo reaproveitava o mesmo Holistic, em modo vídeo, para todos os vídeos
+> que tratava. O estado de rastreamento e a suavização da pose passavam de um
+> vídeo para o seguinte: os primeiros frames de cada frase herdavam o último
+> frame do vídeo anterior, e o resultado de um vídeo dependia de qual vídeo o
+> mesmo processo tratou antes (logo, do `--workers` e da ordem). Agora o
+> estado é zerado antes de cada vídeo (o mesmo vale para o `infer_slt.py`). Os
+> `.npy` extraídos antes da correção têm o problema; para corrigi-los, é
+> preciso reextrair (com `--overwrite`, numa pasta nova para comparar).
+
 ### 6.4 Normalização (s4)
 
 ```bash
@@ -273,6 +283,25 @@ $EXTRACT normalize_landmarks.py \
     --out-dir data_phoenix/features/landmarks_115_norm9 \
     --workers 20
 ```
+
+> **Correção opcional (nov/2026): proporção da imagem (`--aspect`).** O
+> MediaPipe divide X pela **largura** e Y pela **altura** da imagem. No
+> PHOENIX (210 × 260) o espaço fica esticado ~24% na horizontal, o que distorce
+> ângulos, a normal da palma e distâncias (grupos A, B e C das
+> `--extra-features`). O `--aspect` leva X e Z à escala de Y antes de
+> normalizar. Não exige reextrair: basta normalizar os `landmarks_115` de novo
+> numa pasta nova.
+>
+> ```bash
+> $EXTRACT normalize_landmarks.py \
+>     --in-dir  data_phoenix/raw/landmarks_115 \
+>     --out-dir data_phoenix/features/landmarks_115_norm9_aspect \
+>     --aspect 210x260 --workers 20
+> ```
+>
+> Sem a flag, a saída é idêntica à de antes (byte a byte). Um modelo treinado
+> com os dados corrigidos precisa da mesma correção na inferência a partir de
+> vídeo (`infer_slt.py --aspect auto` ou `--aspect 210x260`).
 
 ### 6.5 Treino
 

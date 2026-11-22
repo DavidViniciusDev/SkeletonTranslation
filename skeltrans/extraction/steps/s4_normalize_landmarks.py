@@ -36,6 +36,7 @@ Uso:
     python3 normalize_landmarks.py                       # landmarks_115 -> landmarks_115_norm9
     python3 normalize_landmarks.py --workers 4           # nº de processos (padrao: 8)
     python3 normalize_landmarks.py --origin nose
+    python3 normalize_landmarks.py --aspect 210x260 --out-dir landmarks_115_norm9_aspect  # PHOENIX
     python3 normalize_landmarks.py --file X.npy --out-dir /tmp/out
     python3 normalize_landmarks.py --overwrite
 """
@@ -52,17 +53,17 @@ IN_DIR = PATHS.landmarks_dir
 OUT_DIR = PATHS.landmarks_norm_dir
 
 # Layout, geometria, I/O e paralelismo: fonte unica em skeltrans/common/
-from skeltrans.common.geometry import normalize_array  # noqa: E402  (Passo 3, reutilizavel)
+from skeltrans.common.geometry import normalize_array, parse_aspect  # noqa: E402  (Passo 3)
 from skeltrans.common.npy_io import load_points  # noqa: E402
 from skeltrans.common.parallel import fmt_eta, run_pool  # noqa: E402
 
 
 def _normalize_one(task):
     """Normaliza um arquivo (executado em processo worker). Retorna (src, status, info)."""
-    src, dst, origin = task
+    src, dst, origin, aspect = task
     try:
         arr = load_points(src, n_coords=3)
-        feats = normalize_array(arr, origin=origin)
+        feats = normalize_array(arr, origin=origin, aspect=aspect)
         np.save(dst, feats)
         return (src, "ok", feats.shape)
     except Exception as e:  # noqa: BLE001 - reporta erro por arquivo sem derrubar o pool
@@ -76,9 +77,18 @@ def main():
     ap.add_argument("--file", default=None, help="normaliza um unico .npy")
     ap.add_argument("--origin", choices=["shoulders", "nose"], default="shoulders",
                     help="origem da centralizacao (padrao: ponto medio dos ombros)")
+    ap.add_argument("--aspect", default=None, metavar="LxA",
+                    help="proporcao da imagem de origem (ex.: 210x260 no PHOENIX-2014T). Corrige "
+                         "a escala de X e Z, que o MediaPipe divide pela largura (e Y pela "
+                         "altura), antes de normalizar. Sem a flag: comportamento original. "
+                         "Use uma --out-dir nova e a MESMA correcao na inferencia.")
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--workers", type=int, default=8, help="numero de processos paralelos (padrao: 8)")
     args = ap.parse_args()
+    try:
+        aspect = parse_aspect(args.aspect) if args.aspect else None
+    except ValueError as e:
+        ap.error(str(e))
 
     os.makedirs(args.out_dir, exist_ok=True)
 
@@ -99,12 +109,13 @@ def main():
         if not args.overwrite and os.path.exists(dst):
             skipped += 1
             continue
-        tasks.append((f, dst, args.origin))
+        tasks.append((f, dst, args.origin, aspect))
 
     total = len(tasks)
     workers = max(1, min(args.workers, total)) if total else 1
     print(f"Arquivos encontrados: {len(files)} | a normalizar: {total} | "
           f"pulados(ja existiam): {skipped} | origem: {args.origin} | "
+          f"proporcao: {f'{aspect:.4f} (corrigida)' if aspect else 'sem correcao'} | "
           f"processos: {workers} | saida: {args.out_dir}")
 
     if total == 0:

@@ -89,9 +89,53 @@ def temporal_features(pos, present):
     return vel, acc
 
 
-def normalize_array(arr, origin="shoulders"):
-    """(T,115,3) -> (T,115,9) normalizado."""
+def parse_aspect(spec):
+    """Converte a proporção da imagem em largura/altura.
+
+    Aceita "LxA" (ex.: "210x260", o PHOENIX-2014T) ou um número (ex.: "0.8077").
+    Levanta ValueError se o valor não for positivo ou não puder ser lido.
+    """
+    s = str(spec).strip().lower()
+    try:
+        if "x" in s:
+            w, h = (float(v) for v in s.split("x", 1))
+            value = w / h
+        else:
+            value = float(s)
+    except (ValueError, ZeroDivisionError) as e:
+        raise ValueError(f"proporcao invalida: {spec!r} (use LARGURAxALTURA, ex.: 210x260)") from e
+    if not value > 0:
+        raise ValueError(f"proporcao deve ser > 0: {spec!r}")
+    return value
+
+
+def correct_aspect(arr, aspect):
+    """Leva X e Z à mesma escala de Y, dada a proporção largura/altura da imagem.
+
+    O MediaPipe devolve X dividido pela LARGURA e Y pela ALTURA (e Z numa escala
+    próxima à de X). Numa imagem não quadrada o espaço fica esticado: no
+    PHOENIX (210x260) uma unidade de X vale 210 px e uma de Y, 260 px, o que
+    distorce ângulos, a normal da palma e distâncias. Multiplicar X e Z por
+    largura/altura deixa os três eixos em "pixels / altura": uma escala
+    uniforme, que a normalização pelos ombros depois remove. Pontos ausentes
+    ([0,0,0]) continuam zero.
+    """
+    out = np.array(arr, dtype=np.float64, copy=True)
+    out[..., 0] *= aspect
+    out[..., 2] *= aspect
+    return out
+
+
+def normalize_array(arr, origin="shoulders", aspect=None):
+    """(T,115,3) -> (T,115,9) normalizado.
+
+    `aspect` (largura/altura da imagem de origem): se informado, corrige a
+    escala de X e Z antes de normalizar (ver correct_aspect). None mantém o
+    comportamento original, bit a bit.
+    """
     present = present_mask(arr)
+    if aspect is not None:
+        arr = correct_aspect(arr, aspect)
     pos = centralize_and_scale(arr, present, origin=origin)
     # reimpoe ausentes como zero na posicao
     pos[~present] = 0.0

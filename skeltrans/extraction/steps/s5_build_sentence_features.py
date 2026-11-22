@@ -82,9 +82,9 @@ from skeltrans.common.geometry import (  # noqa: E402
 )
 from skeltrans.extraction.config import PATHS  # noqa: E402
 try:
-    from skeltrans.common.geometry import normalize_array  # noqa: E402  (Passo 3)
+    from skeltrans.common.geometry import normalize_array, parse_aspect  # noqa: E402  (Passo 3)
 except Exception as e:  # pragma: no cover
-    normalize_array = None
+    normalize_array = parse_aspect = None
     _NORM_IMPORT_ERR = e
 
 
@@ -244,6 +244,10 @@ def main():
                     help="Janela de frames de ancora em cada lado para a spline cubica.")
     ap.add_argument("--origin", choices=["shoulders", "nose"], default="shoulders",
                     help="Origem da centralizacao (repassado ao Passo 3).")
+    ap.add_argument("--aspect", default=None, metavar="LxA",
+                    help="Proporcao dos videos de origem (ex.: 1280x720). Com --feature-mode "
+                         "normalized, corrige a escala de X e Z antes de normalizar (repassado "
+                         "ao Passo 3). Sem a flag: comportamento original.")
     ap.add_argument("--limit", type=int, default=0,
                     help="Processa apenas as N primeiras sentencas (0 = todas). Util p/ teste.")
     ap.add_argument("--overwrite", action="store_true",
@@ -252,6 +256,12 @@ def main():
 
     if args.feature_mode == "normalized" and normalize_array is None:
         sys.exit(f"ERRO: nao consegui importar normalize_landmarks: {_NORM_IMPORT_ERR}")
+    if args.aspect and parse_aspect is None:
+        sys.exit(f"ERRO: --aspect exige skeltrans.common.geometry: {_NORM_IMPORT_ERR}")
+    try:
+        aspect = parse_aspect(args.aspect) if args.aspect else None
+    except ValueError as e:
+        ap.error(str(e))
 
     manifest_path = args.manifest or os.path.join(args.out_dir, "manifest.json")
     stem = os.path.splitext(manifest_path)[0]
@@ -317,7 +327,8 @@ def main():
                 continue
 
             if args.feature_mode == "normalized":
-                feats = normalize_array(seq.astype(np.float32), origin=args.origin)
+                feats = normalize_array(seq.astype(np.float32), origin=args.origin,
+                                        aspect=aspect)
             else:
                 feats = seq.astype(np.float32)
 
@@ -360,6 +371,8 @@ def main():
         "origin": args.origin,
         "numpy": np.__version__,
     }
+    if aspect is not None:          # só aparece quando usada: manifestos antigos não mudam
+        config["aspect"] = aspect
     with open(manifest_path, "w", encoding="utf-8") as fh:
         json.dump({"config": config, "items": records}, fh, ensure_ascii=False, indent=2)
 
