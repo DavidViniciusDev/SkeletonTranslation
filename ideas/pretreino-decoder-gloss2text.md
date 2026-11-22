@@ -91,7 +91,9 @@ O que ajuda nessa "imitação":
   verdadeiras pelo encoder de texto do T5 da etapa 1 e aproximar a saída do
   encoder de landmarks dessas representações (por exemplo, distância média
   entre as sequências após um pooling, ou uma perda contrastiva). É a ideia
-  de um "mapeador" entre o espaço visual e o espaço da linguagem.
+  de um "mapeador" entre o espaço visual e o espaço da linguagem. A versão
+  contrastiva está detalhada em `alinhamento-contrastivo-pose-texto.md`
+  (inspirada no SignCLIP).
 
 ### 4.2 Glosas com ruído na etapa 1
 
