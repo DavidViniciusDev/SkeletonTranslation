@@ -27,7 +27,7 @@ Resultados de treino novos entram também na tabela da seção 2.
 
 ### 2026-11-24 · Pré-treino do decoder em Gloss2Text
 - **Tipo:** Funcionalidade
-- **Commit:** (a commitar)
+- **Commit:** `674df76`
 - **O quê:** `pretrain_decoder.py` (código em `skeltrans/training/gloss2text.py`) treina o T5 a traduzir as glosas verdadeiras dos manifestos (`tokens` → `text`), só com texto, e salva a melhor época da validação em `<out-dir>/best` (formato Hugging Face). No SLT, basta `--t5 <out-dir>/best`: nenhuma flag nova, e avaliação e inferência carregam o T5 pelo caminho gravado no checkpoint. Com `--test-manifest`, mede o **teto do decoder** (BLEU com glosas perfeitas) em `teto.json`. Opções: `--gloss-noise` / `--noise-mix` (glosas do treino corrompidas como pelo encoder: substituição, deleção, inserção), `--lowercase-glosses`, `--drop-markers`; `--label-smoothing`, `--select-by`, `--seed`, `--low-vram`, `--grad-checkpoint`.
 - **Por quê:** até a v17 o WER caiu a cada treino e o BLEU estacionou em ~19; o gargalo é a tradução. Separar "ler o encoder" de "traduzir a gramática de sinais" deixa ao decoder só a primeira tarefa no SLT, e o teto diz se a meta de 30 é alcançável com esse decoder.
 - **Padrão:** só um script novo; nenhum arquivo existente do treino mudou (treino bit a bit idêntico ao commit anterior).
