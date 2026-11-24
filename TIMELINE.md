@@ -27,7 +27,7 @@ Resultados de treino novos entram também na tabela da seção 2.
 
 ### 2026-11-23 · Página de comandos de treinamento
 - **Tipo:** Documentação
-- **Commit:** a definir (ainda não commitado)
+- **Commit:** `b829f39`
 - **O quê:** `docs/comandos-treinamento.md` reúne, em PowerShell e bash, os comandos de cada módulo (receita base v15, `flat`, `parts`, `gcn`, `concept`, pré-treino, augmentation, multi-GPU, avaliação, média de checkpoints, ajuste da decodificação e inferência). A receita base de `docs/encoders/README.md` passou da v11 para a v15.
 - **Por quê:** ter num lugar só tudo o que é preciso para rodar cada experimento.
 - **Padrão:** só documentação.
@@ -35,13 +35,13 @@ Resultados de treino novos entram também na tabela da seção 2.
 
 ### 2026-11-23 · Ideia: encoder em múltiplos fluxos com fusão tardia
 - **Tipo:** Ideia
-- **Commit:** a definir (ainda não commitado)
+- **Commit:** `b829f39`
 - **O quê:** nota `ideas/encoder-multifluxo-fusao-tardia.md`: um encoder temporal para as mãos e outro para corpo + rosto, cada um com CTC auxiliar, fundidos antes do T5; plano para implementar atrás de `--encoder-streams` sem mudar o padrão.
 - **Docs:** pasta `ideas/` (ver seção 3).
 
 ### 2026-11-23 · Pré-treino do encoder por masked pose modeling
 - **Tipo:** Funcionalidade
-- **Commit:** a definir (ainda não commitado)
+- **Commit:** `b829f39`
 - **O quê:** `pretrain_encoder.py` (código em `skeltrans/training/pretrain.py` e `models/masked_pose.py`) esconde trechos dos keypoints (`--mask-mode frames|hands|mixed`, `--mask-ratio`, `--mask-span`) e treina o `LandmarkEncoder` a reconstruí-los, sem glosas nem traduções. Gera `encoder.pt` (só o encoder + spec + estatísticas do `--input-norm`; lido com `weights_only=True`). No SLT, `--init-encoder <encoder.pt>` carrega esses pesos como ponto de partida, conferindo antes que `--extra-features`, `--input-norm`, `--encoder-type`, `--d-model`, `--nhead`, `--num-layers` e `--ds-steps` são os mesmos. Novo `KeypointDataset` (manifestos sem texto).
 - **Por quê:** ~7 mil frases é pouco para um encoder que começa do zero; reconstruir keypoints escondidos ensina a estrutura do movimento, o que deve reduzir as substituições (≈23 dos 37,5 de WER da v15). Permite usar keypoints sem rótulo de outros datasets.
 - **Padrão:** desligado; sem `--init-encoder`, o treino é o mesmo de antes. Avaliação e inferência não mudam (o `best.pt` contém tudo).
