@@ -120,6 +120,11 @@ class TrainConfig:
     # (o original). Na GPU o resultado fica muito próximo, mas não bit a bit:
     # algumas operações CUDA (ex.: o backward do CTC) não são determinísticas.
     seed: Optional[int] = None
+    # --- ponto de partida do encoder --- #
+    # Caminho de um encoder.pt do pré-treino (pretrain_encoder.py). None = o
+    # encoder começa com pesos aleatórios (o original). Só afeta o início do
+    # treino: o best.pt continua autossuficiente.
+    init_encoder: Optional[str] = None
 
 
 # Critérios aceitos por TrainConfig.select_by -> chave no dict de métricas de

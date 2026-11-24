@@ -443,6 +443,18 @@ def build_and_train(model_cfg, data_cfg, train_cfg):
                      concept_queries=model_cfg.concept_queries,
                      concept_boundaries=model_cfg.concept_boundaries,
                      concept_greedy_prob=model_cfg.concept_greedy_prob).to(device)
+    # --init-encoder: pesos do pré-treino (pretrain_encoder.py) como ponto de
+    # partida do encoder. Depois do --seed (o resto continua reprodutível) e
+    # antes do DDP (todos os ranks leem o mesmo arquivo).
+    init_path = getattr(train_cfg, "init_encoder", None)
+    if init_path:
+        from skeltrans.training.encoder_init import init_encoder_from_file
+        info = init_encoder_from_file(model, init_path, model_cfg)
+        if main:
+            print(f"[init-encoder] pesos do encoder vindos de {init_path} "
+                  f"(pre-treino: {info.get('epochs_run', '?')} epocas, mascara "
+                  f"{info.get('mask_mode', '?')} {info.get('mask_ratio', '?')}, val_mse "
+                  f"{info.get('best_val_mse', '?')}); adaptador e CTC comecam do zero")
     if main and model_cfg.temporal_mode == "concept":
         print(f"[concept] memoria por sinal | fronteiras no treino: "
               f"{model_cfg.concept_boundaries} (greedy p={model_cfg.concept_greedy_prob}); "
@@ -461,7 +473,11 @@ def build_and_train(model_cfg, data_cfg, train_cfg):
     # Normalização da entrada: média/desvio por coluna sobre o TREINO. Só o
     # rank 0 calcula; em DDP o construtor do DistributedDataParallel
     # transmite os buffers do rank 0 para os demais.
-    if model_cfg.input_norm and main:
+    # Com --init-encoder, as estatísticas já vieram do pré-treino e ficam: os
+    # pesos aprenderam com aquela escala de entrada.
+    if model_cfg.input_norm and main and init_path:
+        print("[input-norm] usando a media/desvio do encoder pre-treinado")
+    elif model_cfg.input_norm and main:
         print("[input-norm] calculando media/desvio por coluna no conjunto de treino ...")
         stats_ds = LandmarkTextDataset(data_cfg.train_manifest,
                                        features_dir=data_cfg.features_dir,

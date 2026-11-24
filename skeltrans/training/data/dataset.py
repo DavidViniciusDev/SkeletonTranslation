@@ -76,8 +76,22 @@ class LandmarkTextDataset(Dataset):
 
     def __getitem__(self, i):
         it = self.items[i]
-        feat = self._resolve(self._pick(it, self._FEAT_KEYS, "manifesto"))
         text = self._pick(it, self._TEXT_KEYS, "manifesto")
+        feats = self.load_features(i)
+        if self.return_gloss:
+            gloss = self._pick_optional(it, self._GLOSS_KEYS, default=[])
+            return feats, text, list(gloss)
+        return feats, text
+
+    def load_features(self, i):
+        """Entrada do encoder do item ``i``: (T, 1035 + extras) float32.
+
+        Lê o .npy, aplica a augmentation (se houver) e monta as features
+        extras. Não precisa do texto: o pré-treino do encoder
+        (``KeypointDataset``) usa só este método.
+        """
+        it = self.items[i]
+        feat = self._resolve(self._pick(it, self._FEAT_KEYS, "manifesto"))
         arr = np.load(feat).astype(np.float32)            # (T, 115, 9)
         if self.augment is not None:
             if arr.ndim == 2:                             # .npy já achatado (T, 1035)
@@ -90,10 +104,7 @@ class LandmarkTextDataset(Dataset):
             arr = build_input(arr, self.extra_features)   # (T, 1035 + extras)
         elif arr.ndim == 3:
             arr = arr.reshape(arr.shape[0], -1)           # (T, 1035)
-        if self.return_gloss:
-            gloss = self._pick_optional(it, self._GLOSS_KEYS, default=[])
-            return torch.from_numpy(arr), text, list(gloss)
-        return torch.from_numpy(arr), text
+        return torch.from_numpy(arr)
 
     @classmethod
     def _pick_optional(cls, item, keys, default=None):
@@ -101,3 +112,16 @@ class LandmarkTextDataset(Dataset):
             if k in item:
                 return item[k]
         return default
+
+
+class KeypointDataset(LandmarkTextDataset):
+    """Só os keypoints de um manifesto, sem texto nem glosas.
+
+    Usado no pré-treino do encoder (``pretrain_encoder.py``): basta que cada
+    item aponte para um .npy, então servem manifestos sem tradução. O item é
+    a tupla ``(features,)``, para que ``compute_input_stats`` (que lê
+    ``item[0]``) funcione igual ao do treino de SLT.
+    """
+
+    def __getitem__(self, i):
+        return (self.load_features(i),)

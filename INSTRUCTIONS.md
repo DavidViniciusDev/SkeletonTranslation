@@ -222,6 +222,10 @@ imprime um aviso e continua.
 | Seleção e parada | `--select-by --patience --min-delta` |
 | Entrada | `--extra-features --input-norm` (ver [EXTRA_FEATURES.md](EXTRA_FEATURES.md)) |
 | Augmentation (só treino) | `--aug-speed --aug-spatial --aug-noise --aug-flip` (ver [AUGMENTATION.md](AUGMENTATION.md)) |
+| Encoder pré-treinado | `--init-encoder <encoder.pt>`, gerado por `pretrain_encoder.py` (ver [docs/encoders/pretrain.md](docs/encoders/pretrain.md)) |
+
+Todos os comandos de treino, módulo a módulo, estão em
+[docs/comandos-treinamento.md](docs/comandos-treinamento.md).
 
 **Label smoothing (`--label-smoothing`):** em vez de exigir 100% de
 probabilidade no token certo, o alvo reparte um pouco (ex.: `0.1`) entre os

@@ -130,6 +130,16 @@ def build_parser():
              "greedy num lote de treino mesmo tendo as glosas, para aproximar o treino da "
              "inferencia (ex.: 0.3). Padrao: 0.")
     ap.add_argument(
+        "--init-encoder", default=_TC.init_encoder, metavar="ENCODER_PT",
+        help="Comeca o treino com os pesos de um encoder pre-treinado (o encoder.pt gerado "
+             "por pretrain_encoder.py, por masked pose modeling) em vez de pesos aleatorios. "
+             "O adaptador, o CTC e o andar de conceitos comecam do zero. A entrada e a "
+             "arquitetura precisam ser as do pre-treino (--extra-features, --input-norm, "
+             "--encoder-type, --d-model, --nhead, --num-layers, --ds-steps); se nao forem, "
+             "o treino nao comeca. Com --input-norm, a media/desvio do pre-treino sao "
+             "mantidos. Avaliacao e inferencia nao precisam deste arquivo (os pesos ficam "
+             "no best.pt). Ver docs/encoders/pretrain.md.")
+    ap.add_argument(
         "--input-norm", action="store_true", default=_MC.input_norm,
         help="Normaliza cada coluna da entrada (z-score) com media e desvio calculados no "
              "conjunto de TREINO antes do treino comecar. As estatisticas ficam no "
@@ -298,8 +308,34 @@ def args_to_configs(args):
                             eval_max_samples=args.eval_max_samples,
                             eval_max_new_tokens=args.max_text_len,
                             select_by=args.select_by,
-                            label_smoothing=args.label_smoothing, seed=args.seed)
+                            label_smoothing=args.label_smoothing, seed=args.seed,
+                            init_encoder=args.init_encoder)
     return model_cfg, data_cfg, train_cfg
+
+
+def validate_init_encoder(args):
+    """Mensagem de erro se o --init-encoder não servir para este treino (ou None).
+
+    Roda antes de baixar o T5 e de ler os dados: a incompatibilidade aparece
+    em segundos, e não depois de montar o modelo.
+    """
+    if not args.init_encoder:
+        return None
+    import os
+
+    from skeltrans.training.encoder_init import (read_encoder, spec_from_model_config,
+                                                 spec_mismatches)
+    if not os.path.isfile(args.init_encoder):
+        return f"--init-encoder: arquivo nao encontrado: {args.init_encoder}"
+    try:
+        ckpt = read_encoder(args.init_encoder)
+    except Exception as exc:  # arquivo corrompido ou de outro formato
+        return f"--init-encoder: {exc}"
+    errors = spec_mismatches(ckpt["spec"], spec_from_model_config(args_to_configs(args)[0]))
+    if errors:
+        return ("--init-encoder nao combina com este treino (use as mesmas flags do "
+                "pre-treino):\n  " + "\n  ".join(errors))
+    return None
 
 
 def validate_concept_args(args):
@@ -349,6 +385,9 @@ def main(argv=None):
     if SELECT_METRICS[args.select_by] and not args.eval_every:
         sys.exit(f"--select-by {args.select_by} requer --eval-every N (a metrica so e "
                  "calculada nas epocas de avaliacao).")
+    init_error = validate_init_encoder(args)
+    if init_error:
+        sys.exit(init_error)
     build_and_train(*args_to_configs(args))
 
 

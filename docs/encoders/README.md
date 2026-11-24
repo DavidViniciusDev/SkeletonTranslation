@@ -9,6 +9,10 @@ PowerShell).
 | [parts.md](parts.md) | `--encoder-type parts` | uma MLP por parte do corpo (pose, mãos, face) + fusão | espacial (dentro de um frame) |
 | [gcn.md](gcn.md) | `--encoder-type gcn` | convolução em grafo sobre o esqueleto + média por parte | espacial (dentro de um frame) |
 | [concept.md](concept.md) | `--temporal-mode concept` | uma posição de memória por **sinal**, com fronteiras vindas do CTC | temporal (entre frames) |
+| [pretrain.md](pretrain.md) | `pretrain_encoder.py` + `--init-encoder` | o encoder começa com pesos de um pré-treino sem rótulos (masked pose modeling) | inicialização (vale para qualquer um acima) |
+
+Todos os comandos, módulo a módulo e em PowerShell e bash, estão em
+[../comandos-treinamento.md](../comandos-treinamento.md).
 
 **Espacial × temporal.** `--encoder-type` decide como os 115 pontos de **um
 frame** viram um vetor. `--temporal-mode` decide como os **frames** viram a
@@ -34,10 +38,10 @@ $DATA = "data_phoenix"            # ajuste para o caminho local
 $FEAT = "$DATA\features\landmarks_115_norm9"
 ```
 
-## 2. Receita base (v11)
+## 2. Receita base (v15)
 
-Todos os guias partem da configuração da **v11**, o melhor resultado até agora
-(BLEU-4 17,81, WER 40,01). Para comparar encoders, **mude só a flag do
+Todos os guias partem da configuração da **v15**, o melhor resultado até agora
+(BLEU-4 19,22, WER 37,5). Para comparar encoders, **mude só a flag do
 encoder** e mantenha o resto, inclusive a semente:
 
 ```powershell
@@ -48,12 +52,13 @@ $BASE = @(
   "--t5", "GermanT5/t5-efficient-gc4-german-base-nl36",
   "--d-model", "512", "--num-layers", "6", "--ds-steps", "2",
   "--use-ctc", "--ctc-weight", "1.0",
-  "--extra-features", "A,B,C,F", "--input-norm",
-  "--batch-size", "32", "--lr", "1e-4", "--encoder-lr", "3e-4", "--warmup-steps", "800",
+  "--extra-features", "A,B,C,D,E,F", "--input-norm",
+  "--batch-size", "32", "--lr", "5e-5", "--encoder-lr", "3e-4", "--warmup-steps", "800",
+  "--label-smoothing", "0.1",
   "--epochs", "70", "--patience", "20",
   "--eval-every", "1", "--eval-beams", "4", "--select-by", "bleu4",
   "--low-vram", "--grad-checkpoint",
-  "--seed", "42"                  # a v11 rodou sem semente; fixe uma para comparar braços
+  "--seed", "1"
 )
 
 # linha de base (flat, o original)
@@ -114,4 +119,5 @@ anteriores à linha final já passaram.
 & $PY tests\test_encoder_parts_lr.py
 & $PY tests\test_encoder_gcn.py
 & $PY tests\test_encoder_concept.py
+& $PY tests\test_pretrain_encoder.py
 ```

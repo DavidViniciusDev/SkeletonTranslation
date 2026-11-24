@@ -66,7 +66,7 @@ que vai encontrar na inferência.
 
 ## Treinar
 
-Configuração principal, com o mesmo total de camadas da v11 (4 de frames + 2
+Configuração principal, com o mesmo total de camadas da v15 (4 de frames + 2
 de conceitos = 6):
 
 ```powershell
@@ -83,7 +83,7 @@ O log confirma o modo no início:
 
 ## Ablações sugeridas
 
-Rode cada uma contra a v11 (`checkpoints_phoenix_flat`), mudando só o indicado:
+Rode cada uma contra a linha de base `stride` com a mesma receita (`@BASE`), mudando só o indicado:
 
 | # | Pergunta | Flags além de `@BASE --temporal-mode concept --num-layers 4` |
 |---|---|---|
@@ -122,7 +122,7 @@ informação para o decoder.
 ## Custo
 
 - **Parâmetros:** com `--num-layers 4 --concept-layers 2`, o encoder tem o
-  mesmo número de camadas Transformer da v11. O pooling acrescenta poucos
+  mesmo número de camadas Transformer da v15. O pooling acrescenta poucos
   pesos: uma pontuação por query (`d_model × K`), um LayerNorm e, com K > 1,
   um embedding por query.
 - **Atenção:** o andar de conceitos atende a ~7·K posições (barato), e o
@@ -139,6 +139,14 @@ informação para o decoder.
   para `flat`, `parts` e `gcn`.
 - Checkpoints antigos carregam como `stride`. Um checkpoint `concept` com o
   config dizendo `stride` carrega como `concept`, com aviso (os pesos mandam).
+
+## Resultado registrado
+
+1º treino (receita da v15 com `--lr 3e-5`, `--num-layers 4 --concept-layers 2`, K=1):
+BLEU-4 17,98, WER 38,25 (del 12,15). A linha de base justa é a v16 (`stride`,
+mesma receita): BLEU-4 18,76, WER 37,97. O `concept` com K=1 ficou 0,8 de BLEU
+abaixo e com mais deleções. Próximos braços: ablações 2 (K=2), 3 (greedy-prob)
+e a versão com `--num-layers 6`.
 
 ## Limitações desta versão
 
