@@ -18,6 +18,7 @@ mude uma coisa por vez e mantenha a semente.
 | 4 | [Encoder `gcn`](#4-encoder-gcn) | grafo do esqueleto | [gcn.md](encoders/gcn.md) |
 | 5 | [Modo `concept`](#5-modo-concept) | uma posição de memória por sinal | [concept.md](encoders/concept.md) |
 | 6 | [Pré-treino do encoder](#6-pré-treino-do-encoder-masked-pose-modeling) | encoder começa pré-treinado | [pretrain.md](encoders/pretrain.md) |
+| 6b | [Pré-treino do decoder](#6b-pré-treino-do-decoder-gloss2text) | decoder começa sabendo traduzir glosas | [gloss2text.md](decoder/gloss2text.md) |
 | 7 | [Augmentation](#7-augmentation-dos-keypoints) | dados variados a cada época | [AUGMENTATION.md](../AUGMENTATION.md) |
 | 8 | [Multi-GPU](#8-várias-gpus-ddp) | mesmo treino em N GPUs | [MULTI_GPU.md](../MULTI_GPU.md) |
 | 9 | [Depois do treino](#9-depois-do-treino) | avaliação, média, decodificação, inferência | [EVALUATION.md](../EVALUATION.md) |
@@ -54,6 +55,7 @@ FEAT=$DATA/features/landmarks_115_norm9
 & $PY slt_model.py --smoke-test --device cpu --encoder-type gcn --use-ctc
 & $PY slt_model.py --smoke-test --device cpu --temporal-mode concept --ds-steps 2
 & $PY pretrain_encoder.py --smoke-test
+& $PY pretrain_decoder.py --smoke-test
 ```
 
 ### Testes unitários
@@ -240,6 +242,55 @@ $PY slt_model.py "${BASE[@]}" --init-encoder checkpoints_pretrain/encoder.pt \
 
 ---
 
+## 6b. Pré-treino do decoder (Gloss2Text)
+
+Duas etapas. Na 1ª, o T5 aprende a traduzir **glosas → alemão**, só com texto
+(rápido). Na 2ª, o treino de SLT começa com esse T5. A 1ª etapa também mede o
+**teto** do decoder (`teto.json`): o BLEU no teste com glosas perfeitas.
+
+**Etapa 1: pré-treino.** Use o mesmo `--t5` da receita base.
+
+```powershell
+& $PY pretrain_decoder.py `
+    --train-manifest $DATA\interim\train.json --val-manifest $DATA\interim\dev.json `
+    --test-manifest $DATA\interim\test.json `
+    --t5 GermanT5/t5-efficient-gc4-german-base-nl36 `
+    --epochs 30 --batch-size 32 --lr 1e-4 --warmup-steps 200 --label-smoothing 0.1 `
+    --eval-beams 4 --select-by bleu4 --patience 10 `
+    --low-vram --seed 1 --out-dir checkpoints_gloss2text
+```
+
+```bash
+$PY pretrain_decoder.py \
+    --train-manifest "$DATA/interim/train.json" --val-manifest "$DATA/interim/dev.json" \
+    --test-manifest "$DATA/interim/test.json" \
+    --t5 GermanT5/t5-efficient-gc4-german-base-nl36 \
+    --epochs 30 --batch-size 32 --lr 1e-4 --warmup-steps 200 --label-smoothing 0.1 \
+    --eval-beams 4 --select-by bleu4 --patience 10 \
+    --low-vram --seed 1 --out-dir checkpoints_gloss2text
+```
+
+Variações da etapa 1: `--gloss-noise 0.35` (glosas do treino com erros, como
+as do encoder), `--lowercase-glosses`, `--drop-markers`.
+
+**Etapa 2: SLT a partir do decoder pré-treinado.** O `--t5` depois do `@BASE`
+substitui o da receita.
+
+```powershell
+& $PY slt_model.py @BASE --t5 checkpoints_gloss2text\best `
+    --out-dir checkpoints_phoenix_g2t
+```
+
+```bash
+$PY slt_model.py "${BASE[@]}" --t5 checkpoints_gloss2text/best \
+    --out-dir checkpoints_phoenix_g2t
+```
+
+Mantenha o `--lr 5e-5` da receita (lr alto no decoder apaga o pré-treino) e
+não mova a pasta `best/`: a avaliação carrega o T5 dela.
+
+---
+
 ## 7. Augmentation dos keypoints
 
 Só no treino. Teste uma de cada vez e depois a combinação:
@@ -337,6 +388,10 @@ Os módulos são independentes e se somam na mesma linha. Exemplos:
 # gcn + concept
 & $PY slt_model.py @BASE --encoder-type gcn --temporal-mode concept --num-layers 4 --concept-layers 2 `
     --out-dir checkpoints_phoenix_gcn_concept
+
+# encoder e decoder pré-treinados
+& $PY slt_model.py @BASE --t5 checkpoints_gloss2text\best `
+    --init-encoder checkpoints_pretrain\encoder.pt --out-dir checkpoints_phoenix_mpm_g2t
 
 # pré-treino + augmentation
 & $PY slt_model.py @BASE --init-encoder checkpoints_pretrain\encoder.pt `

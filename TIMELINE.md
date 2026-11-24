@@ -25,6 +25,15 @@ Resultados de treino novos entram também na tabela da seção 2.
 
 ## 1. Linha do tempo (mais recente primeiro)
 
+### 2026-11-24 · Pré-treino do decoder em Gloss2Text
+- **Tipo:** Funcionalidade
+- **Commit:** (a commitar)
+- **O quê:** `pretrain_decoder.py` (código em `skeltrans/training/gloss2text.py`) treina o T5 a traduzir as glosas verdadeiras dos manifestos (`tokens` → `text`), só com texto, e salva a melhor época da validação em `<out-dir>/best` (formato Hugging Face). No SLT, basta `--t5 <out-dir>/best`: nenhuma flag nova, e avaliação e inferência carregam o T5 pelo caminho gravado no checkpoint. Com `--test-manifest`, mede o **teto do decoder** (BLEU com glosas perfeitas) em `teto.json`. Opções: `--gloss-noise` / `--noise-mix` (glosas do treino corrompidas como pelo encoder: substituição, deleção, inserção), `--lowercase-glosses`, `--drop-markers`; `--label-smoothing`, `--select-by`, `--seed`, `--low-vram`, `--grad-checkpoint`.
+- **Por quê:** até a v17 o WER caiu a cada treino e o BLEU estacionou em ~19; o gargalo é a tradução. Separar "ler o encoder" de "traduzir a gramática de sinais" deixa ao decoder só a primeira tarefa no SLT, e o teto diz se a meta de 30 é alcançável com esse decoder.
+- **Padrão:** só um script novo; nenhum arquivo existente do treino mudou (treino bit a bit idêntico ao commit anterior).
+- **Resultado:** a medir (teto do decoder; v15 com `--t5 .../best`, mesma semente).
+- **Docs:** `docs/decoder/gloss2text.md`, seção 6b de `docs/comandos-treinamento.md`, `ideas/pretreino-decoder-gloss2text.md`; testes em `tests/test_pretrain_decoder.py` (11).
+
 ### 2026-11-23 · Página de comandos de treinamento
 - **Tipo:** Documentação
 - **Commit:** `b829f39`
@@ -208,6 +217,7 @@ Resultados de treino novos entram também na tabela da seção 2.
 | 2026-11-11 | **v15** | lr do decoder 5e-5 · `--label-smoothing 0.1` | **19,22** | 37,5 |
 | 2026-11-13 | v16 | v15 com `--lr 3e-5` | 18,76 | 37,97 |
 | 2026-11-13 | concept v1 | `--temporal-mode concept` (lr 3e-5) | 17,98 | 38,25 |
+| 2026-11-24 | v17 | v15 com `--epochs 100 --patience 25` | 18,92 | **35,95** |
 
 Padrão observado até nov/2026: o WER cai a cada treino, mas o BLEU-4 cresce
 pouco; o gargalo passou para o lado da tradução (decoder).
@@ -218,7 +228,7 @@ pouco; o gargalo passou para o lado da tradução (decoder).
 
 | Data | Ideia | Nota |
 |---|---|---|
-| 2026-11-10 | Pré-treino do decoder em Gloss2Text (e medição do teto do decoder) | `ideas/pretreino-decoder-gloss2text.md` |
+| 2026-11-24 | Perda de alinhamento entre o encoder de landmarks e o encoder de texto do T5 pré-treinado em Gloss2Text (complemento do pré-treino do decoder) | `ideas/pretreino-decoder-gloss2text.md`, seção 4.1 |
 | 2026-11-22 | Extrator whole-body (Sapiens / RTMPose) convertido para o formato de 115 pontos | `ideas/extrator-whole-body-sapiens.md` |
 | 2026-11-22 | Alinhamento contrastivo entre pose e texto (SignCLIP) | `ideas/alinhamento-contrastivo-pose-texto.md` |
 | 2026-11-23 | Encoder em múltiplos fluxos (mãos × corpo + rosto) com fusão tardia e CTC por fluxo | `ideas/encoder-multifluxo-fusao-tardia.md` |

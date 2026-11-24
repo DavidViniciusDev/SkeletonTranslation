@@ -223,6 +223,7 @@ imprime um aviso e continua.
 | Entrada | `--extra-features --input-norm` (ver [EXTRA_FEATURES.md](EXTRA_FEATURES.md)) |
 | Augmentation (só treino) | `--aug-speed --aug-spatial --aug-noise --aug-flip` (ver [AUGMENTATION.md](AUGMENTATION.md)) |
 | Encoder pré-treinado | `--init-encoder <encoder.pt>`, gerado por `pretrain_encoder.py` (ver [docs/encoders/pretrain.md](docs/encoders/pretrain.md)) |
+| Decoder pré-treinado | `--t5 <pasta best/>`, gerada por `pretrain_decoder.py` (Gloss2Text; ver [docs/decoder/gloss2text.md](docs/decoder/gloss2text.md)) |
 
 Todos os comandos de treino, módulo a módulo, estão em
 [docs/comandos-treinamento.md](docs/comandos-treinamento.md).

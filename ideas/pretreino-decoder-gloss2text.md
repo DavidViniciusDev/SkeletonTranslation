@@ -1,6 +1,8 @@
 # Ideia: pré-treino do decoder em Gloss2Text
 
-> **Status:** ideia registrada, ainda não implementada.
+> **Status:** etapas 1 e 2 implementadas em 2026-11-24 (`pretrain_decoder.py` + `slt_model.py --t5 <best/>`;
+> guia em [docs/decoder/gloss2text.md](../docs/decoder/gloss2text.md)). Ainda não implementada: a perda de
+> alinhamento entre os espaços (seção 4.1). Resultado no PHOENIX: a medir.
 > **Motivação:** resultados do PHOENIX-2014T até nov/2026.
 > **Objetivo:** aumentar o BLEU-4 atacando o lado da **tradução** (decoder), que passou a ser o gargalo.
 
